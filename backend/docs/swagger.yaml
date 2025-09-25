@@ -1,8 +1,71 @@
 basePath: /api/v1
+definitions:
+  controller.CapacityResult:
+    properties:
+      1_lsb:
+        type: integer
+      2_lsb:
+        type: integer
+      3_lsb:
+        type: integer
+      4_lsb:
+        type: integer
+    type: object
 info:
   contact: {}
 paths:
+  /api/capacity:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Calculates the maximum size of a secret file (in bytes) that can
+        be embedded into an uploaded MP3 file using the multiple-LSB method. The capacity
+        is returned for 1, 2, 3, and 4 LSBs.
+      parameters:
+      - description: MP3 audio file to calculate capacity for.
+        in: formData
+        name: audio
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Successfully calculated embedding capacity.
+          schema:
+            $ref: '#/definitions/controller.CapacityResult'
+        "400":
+          description: 'Bad Request: No file uploaded, file is not an MP3, or file
+            is corrupted.'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: 'Internal Server Error: Failed to process the file.'
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Calculate Audio Embedding Capacity
+      tags:
+      - Steganography
   /example/helloworld:
+    get:
+      consumes:
+      - application/json
+      description: do ping
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: ping example
+      tags:
+      - example
+  /example/helloworld2:
     get:
       consumes:
       - application/json

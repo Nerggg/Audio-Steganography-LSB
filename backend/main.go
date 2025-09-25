@@ -1,27 +1,14 @@
 package main
 
 import (
-    "net/http"
     "github.com/gin-gonic/gin"
     swaggerFiles "github.com/swaggo/files"
     ginSwagger "github.com/swaggo/gin-swagger"
     docs "github.com/Nerggg/Audio-Steganography-LSB/backend/docs"
+   "github.com/Nerggg/Audio-Steganography-LSB/backend/controller"
 )
 
 // @BasePath /api/v1
-
-// PingExample godoc
-// @Summary ping example
-// @Schemes
-// @Description do ping
-// @Tags example
-// @Accept json
-// @Produce json
-// @Success 200 {string} Helloworld
-// @Router /example/helloworld [get]
-func Helloworld(g *gin.Context)  {
-   g.JSON(http.StatusOK,"helloworld")
-}
 
 func main()  {
    r := gin.Default()
@@ -30,7 +17,8 @@ func main()  {
    {
       eg := v1.Group("/example")
       {
-         eg.GET("/helloworld",Helloworld)
+         eg.GET("/helloworld",controller.Helloworld)
+         eg.GET("/helloworld2",controller.Helloworld2)
       }
    }
    r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

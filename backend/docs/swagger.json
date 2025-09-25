@@ -5,6 +5,56 @@
     },
     "basePath": "/api/v1",
     "paths": {
+        "/api/capacity": {
+            "post": {
+                "description": "Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded MP3 file using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Steganography"
+                ],
+                "summary": "Calculate Audio Embedding Capacity",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "MP3 audio file to calculate capacity for.",
+                        "name": "audio",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successfully calculated embedding capacity.",
+                        "schema": {
+                            "$ref": "#/definitions/controller.CapacityResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request: No file uploaded, file is not an MP3, or file is corrupted.",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error: Failed to process the file.",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/example/helloworld": {
             "get": {
                 "description": "do ping",
@@ -25,6 +75,48 @@
                             "type": "string"
                         }
                     }
+                }
+            }
+        },
+        "/example/helloworld2": {
+            "get": {
+                "description": "do ping",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "example"
+                ],
+                "summary": "ping example",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "controller.CapacityResult": {
+            "type": "object",
+            "properties": {
+                "1_lsb": {
+                    "type": "integer"
+                },
+                "2_lsb": {
+                    "type": "integer"
+                },
+                "3_lsb": {
+                    "type": "integer"
+                },
+                "4_lsb": {
+                    "type": "integer"
                 }
             }
         }
