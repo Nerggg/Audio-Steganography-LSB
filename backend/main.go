@@ -1,24 +1,39 @@
 package main
 
 import (
-  "net/http"
-
-  "github.com/gin-gonic/gin"
+    "net/http"
+    "github.com/gin-gonic/gin"
+    swaggerFiles "github.com/swaggo/files"
+    ginSwagger "github.com/swaggo/gin-swagger"
+    docs "github.com/Nerggg/Audio-Steganography-LSB/backend/docs"
 )
 
-func main() {
-  // Create a Gin router with default middleware (logger and recovery)
-  r := gin.Default()
+// @BasePath /api/v1
 
-  // Define a simple GET endpoint
-  r.GET("/ping", func(c *gin.Context) {
-    // Return JSON response
-    c.JSON(http.StatusOK, gin.H{
-      "message": "pong",
-    })
-  })
+// PingExample godoc
+// @Summary ping example
+// @Schemes
+// @Description do ping
+// @Tags example
+// @Accept json
+// @Produce json
+// @Success 200 {string} Helloworld
+// @Router /example/helloworld [get]
+func Helloworld(g *gin.Context)  {
+   g.JSON(http.StatusOK,"helloworld")
+}
 
-  // Start server on port 8080 (default)
-  // Server will listen on 0.0.0.0:8080 (localhost:8080 on Windows)
-  r.Run()
+func main()  {
+   r := gin.Default()
+   docs.SwaggerInfo.BasePath = "/api/v1"
+   v1 := r.Group("/api/v1")
+   {
+      eg := v1.Group("/example")
+      {
+         eg.GET("/helloworld",Helloworld)
+      }
+   }
+   r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+   r.Run(":8080")
+
 }
