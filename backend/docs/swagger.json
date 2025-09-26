@@ -31,7 +31,7 @@
                     "200": {
                         "description": "Successfully calculated embedding capacity.",
                         "schema": {
-                            "$ref": "#/definitions/controller.CapacityResult"
+                            "$ref": "#/definitions/models.CapacityResult"
                         }
                     },
                     "400": {
@@ -55,47 +55,114 @@
                 }
             }
         },
-        "/example/helloworld": {
-            "get": {
-                "description": "do ping",
+        "/api/embed": {
+            "post": {
+                "description": "Embeds a secret file into an MP3 cover audio file using the multiple-LSB steganography method. Supports encryption with extended Vigenère cipher, random starting position, and configurable LSB depth (1-4 bits). Returns the stego-audio file with PSNR quality measurement.",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/octet-stream"
                 ],
                 "tags": [
-                    "example"
+                    "Steganography"
                 ],
-                "summary": "ping example",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "string"
-                        }
+                "summary": "Embed Secret Message into Audio File",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "MP3 cover audio file to embed the secret message into",
+                        "name": "cover_audio",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Secret file to be hidden (any file type and size)",
+                        "name": "secret_file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Steganography key used for encryption and random seed generation (max 25 characters)",
+                        "name": "stego_key",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            1,
+                            2,
+                            3,
+                            4
+                        ],
+                        "type": "integer",
+                        "description": "Number of LSB bits to use for embedding (1, 2, 3, or 4)",
+                        "name": "n_lsb",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "true",
+                            "false"
+                        ],
+                        "type": "string",
+                        "description": "Whether to encrypt the secret file using Vigenère cipher",
+                        "name": "use_encryption",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "true",
+                            "false"
+                        ],
+                        "type": "string",
+                        "description": "Whether to use random starting position for embedding",
+                        "name": "use_random_start",
+                        "in": "formData",
+                        "required": true
                     }
-                }
-            }
-        },
-        "/example/helloworld2": {
-            "get": {
-                "description": "do ping",
-                "consumes": [
-                    "application/json"
                 ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "example"
-                ],
-                "summary": "ping example",
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "Successfully embedded message into audio file. Returns stego-audio MP3 file.",
                         "schema": {
-                            "type": "string"
+                            "type": "file"
+                        },
+                        "headers": {
+                            "Content-Disposition": {
+                                "type": "string",
+                                "description": "attachment; filename=\\\"filename_stego.mp3\\"
+                            },
+                            "Content-Type": {
+                                "type": "string",
+                                "description": "application/octet-stream"
+                            },
+                            "X-PSNR-Value": {
+                                "type": "string",
+                                "description": "Peak Signal-to-Noise Ratio value (e.g., \\\"38.54\\\")"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request: Missing required parameters, invalid file format, or invalid parameter values",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Payload Too Large: Secret file size exceeds embedding capacity",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error: Failed to process files or embed message",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
                         }
                     }
                 }
@@ -103,7 +170,7 @@
         }
     },
     "definitions": {
-        "controller.CapacityResult": {
+        "models.CapacityResult": {
             "type": "object",
             "properties": {
                 "1_lsb": {
@@ -117,6 +184,29 @@
                 },
                 "4_lsb": {
                     "type": "integer"
+                }
+            }
+        },
+        "models.ErrorDetail": {
+            "type": "object",
+            "properties": {
+                "details": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/models.ErrorDetail"
+                },
+                "success": {
+                    "type": "boolean"
                 }
             }
         }
