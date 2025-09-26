@@ -22,14 +22,13 @@ var ErrInvalidMP3 = errors.New("failed to decode audio data, not a valid MP3 fil
 // @Failure 500 {object} map[string]string "Internal Server Error: Failed to process the file."
 // @Router /api/capacity [post]
 func CalculateCapacityHandler(c *gin.Context)  {
-    // Ambil berkas dari form request
+    // ambil berkas dari form request
     fileHeader, err := c.FormFile("audio")
     if err != nil {
         c.JSON(http.StatusBadRequest, gin.H{"error": "Audio file not provided."})
         return
     }
 
-    // Buka berkas yang diunggah
     file, err := fileHeader.Open()
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open uploaded file."})
@@ -37,14 +36,14 @@ func CalculateCapacityHandler(c *gin.Context)  {
     }
     defer file.Close()
 
-    // Baca konten berkas ke dalam byte slice
+    // baca konten berkas ke dalam byte slice
     audioData, err := io.ReadAll(file)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read file content."})
         return
     }
 
-    // Panggil fungsi inti untuk menghitung kapasitas
+    // itung kapasitas
     capacities, err := controller.CalculateCapacity(audioData)
     if err != nil {
         if err == ErrInvalidMP3 {
@@ -55,6 +54,6 @@ func CalculateCapacityHandler(c *gin.Context)  {
         return
     }
 
-    // Kirim hasil kapasitas sebagai JSON
+    // kirim hasil
     c.JSON(http.StatusOK, capacities)
 }
