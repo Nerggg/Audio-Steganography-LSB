@@ -192,9 +192,9 @@ func (s *steganographyService) EmbedMessage(req *models.EmbedRequest, secretData
 	log.Printf("[INFO] EmbedMessage: PSNR calculated: %.2f dB", psnr)
 
 	// Encode modified PCM back to WAV format (preserves LSB steganography)
-	log.Printf("[DEBUG] EmbedMessage: Encoding to MP3 format...")
+	log.Printf("[DEBUG] EmbedMessage: Encoding to WAV format...")
 	encoder := NewAudioEncoder()
-	wavData, err := encoder.EncodeToMP3(pcmData, decoder.SampleRate())
+	wavData, err := encoder.EncodeToWAV(pcmData, decoder.SampleRate())
 	if err != nil {
 		log.Printf("[ERROR] EmbedMessage: Failed to encode to WAV: %v", err)
 		return nil, 0, fmt.Errorf("failed to encode audio to WAV: %v", err)
