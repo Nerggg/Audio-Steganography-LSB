@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/capacity": {
             "post": {
-                "description": "Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded MP3 file using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.",
+                "description": "Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -31,7 +31,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "file",
-                        "description": "MP3 audio file to calculate capacity for.",
+                        "description": "Audio file (MP3 or WAV) to calculate capacity for.",
                         "name": "audio",
                         "in": "formData",
                         "required": true
@@ -51,7 +51,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request: No file uploaded, file is not an MP3, or file is corrupted.",
+                        "description": "Bad Request: No file uploaded, file is not MP3/WAV, or file is corrupted.",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -73,12 +73,12 @@ const docTemplate = `{
         },
         "/embed": {
             "post": {
-                "description": "Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file with embedded data and quality metrics.",
+                "description": "Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format with embedded data and quality metrics.",
                 "consumes": [
                     "multipart/form-data"
                 ],
                 "produces": [
-                    "application/octet-stream"
+                    "audio/mpeg"
                 ],
                 "tags": [
                     "Steganography"
@@ -197,7 +197,7 @@ const docTemplate = `{
         },
         "/extract": {
             "post": {
-                "description": "Extracts hidden secret data from a stego audio file that was created using LSB steganography. Returns the original secret file.",
+                "description": "Extracts hidden secret data from a stego audio file (MP3 or WAV) that was created using LSB steganography. Returns the original secret file.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -211,7 +211,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "file",
-                        "description": "Stego audio file containing embedded data (max 100MB)",
+                        "description": "Stego audio file (MP3 or WAV) containing embedded data (max 100MB)",
                         "name": "stego_audio",
                         "in": "formData",
                         "required": true
@@ -228,6 +228,32 @@ const docTemplate = `{
                         "name": "lsb",
                         "in": "formData",
                         "required": true
+                    },
+                    {
+                        "enum": [
+                            "true",
+                            "false"
+                        ],
+                        "type": "string",
+                        "description": "Whether the embedded data was encrypted using Vigenère cipher",
+                        "name": "use_encryption",
+                        "in": "formData"
+                    },
+                    {
+                        "enum": [
+                            "true",
+                            "false"
+                        ],
+                        "type": "string",
+                        "description": "Whether random starting position was used during embedding",
+                        "name": "use_random_start",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Steganography key used for decryption and random position generation (required if encryption/random start was used, max 25 characters)",
+                        "name": "stego_key",
+                        "in": "formData"
                     },
                     {
                         "type": "string",

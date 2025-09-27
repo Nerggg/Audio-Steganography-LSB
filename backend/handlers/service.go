@@ -3,9 +3,11 @@ package handlers
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Nerggg/Audio-Steganography-LSB/backend/models"
@@ -18,6 +20,7 @@ type Handlers struct {
 	steganographyService service.SteganographyService
 	cryptographyService  service.CryptographyService
 	audioService         service.AudioService
+	audioEncoder         service.AudioEncoder
 }
 
 // NewHandlers creates a new handlers instance with service dependencies
@@ -25,11 +28,13 @@ func NewHandlers(
 	stegoService service.SteganographyService,
 	cryptoService service.CryptographyService,
 	audioService service.AudioService,
+	audioEncoder service.AudioEncoder,
 ) *Handlers {
 	return &Handlers{
 		steganographyService: stegoService,
 		cryptographyService:  cryptoService,
 		audioService:         audioService,
+		audioEncoder:         audioEncoder,
 	}
 }
 
@@ -88,30 +93,41 @@ func (h *Handlers) HealthHandler(c *gin.Context) {
 
 // CalculateCapacityHandler handles the capacity calculation request
 // @Summary Calculate Audio Embedding Capacity
-// @Description Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded MP3 file using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.
+// @Description Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.
 // @Tags Steganography
 // @Accept multipart/form-data
 // @Produce json
-// @Param audio formData file true "MP3 audio file to calculate capacity for."
+// @Param audio formData file true "Audio file (MP3 or WAV) to calculate capacity for."
 // @Success 200 {object} CapacityResponse "Successfully calculated embedding capacity."
 // @Header 200 {int} X-Processing-Time "Time taken to process the request in milliseconds"
-// @Failure 400 {object} models.ErrorResponse "Bad Request: No file uploaded, file is not an MP3, or file is corrupted."
+// @Failure 400 {object} models.ErrorResponse "Bad Request: No file uploaded, file is not MP3/WAV, or file is corrupted."
 // @Failure 413 {object} models.ErrorResponse "File too large"
 // @Failure 500 {object} models.ErrorResponse "Internal Server Error: Failed to process the file."
 // @Router /capacity [post]
 func (h *Handlers) CalculateCapacityHandler(c *gin.Context) {
 	startTime := time.Now()
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+
+	log.Printf("[INFO] [%s] CalculateCapacityHandler: Starting capacity calculation request from %s", requestID, c.ClientIP())
 
 	// Get audio file from form request
 	fileHeader, err := c.FormFile("audio")
 	if err != nil {
+		log.Printf("[ERROR] [%s] CalculateCapacityHandler: No audio file provided: %v", requestID, err)
 		sendError(c, http.StatusBadRequest, "MISSING_FILE", "Audio file not provided")
 		return
 	}
 
-	// Validate file extension
-	if filepath.Ext(fileHeader.Filename) != ".mp3" {
-		sendError(c, http.StatusBadRequest, "INVALID_FORMAT", "File must be in MP3 format")
+	log.Printf("[DEBUG] [%s] CalculateCapacityHandler: Received file '%s' (size: %d bytes)", requestID, fileHeader.Filename, fileHeader.Size)
+
+	// Validate file extension (support both MP3 and WAV)
+	ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
+	if ext != ".mp3" && ext != ".wav" {
+		log.Printf("[ERROR] [%s] CalculateCapacityHandler: Invalid file format '%s', expected MP3 or WAV", requestID, ext)
+		sendError(c, http.StatusBadRequest, "INVALID_FORMAT", "File must be in MP3 or WAV format")
 		return
 	}
 
@@ -166,10 +182,10 @@ func (h *Handlers) CalculateCapacityHandler(c *gin.Context) {
 
 // EmbedHandler handles the message embedding request
 // @Summary Embed Secret Data in Audio
-// @Description Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file with embedded data and quality metrics.
+// @Description Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format with embedded data and quality metrics.
 // @Tags Steganography
 // @Accept multipart/form-data
-// @Produce application/octet-stream
+// @Produce audio/mpeg
 // @Param audio formData file true "MP3 audio file for embedding (max 100MB)"
 // @Param secret formData file true "Secret file to embed (max 50MB)"
 // @Param lsb formData int true "Number of LSB bits to use for embedding (1-4)" Enums(1, 2, 3, 4)
@@ -189,20 +205,32 @@ func (h *Handlers) CalculateCapacityHandler(c *gin.Context) {
 // @Router /embed [post]
 func (h *Handlers) EmbedHandler(c *gin.Context) {
 	startTime := time.Now()
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+
+	log.Printf("[INFO] [%s] EmbedHandler: Starting embed request from %s", requestID, c.ClientIP())
 
 	// Get audio file
 	audioHeader, err := c.FormFile("audio")
 	if err != nil {
+		log.Printf("[ERROR] [%s] EmbedHandler: No audio file provided: %v", requestID, err)
 		sendError(c, http.StatusBadRequest, "MISSING_FILES", "Audio file not provided")
 		return
 	}
 
+	log.Printf("[DEBUG] [%s] EmbedHandler: Audio file '%s' (size: %d bytes)", requestID, audioHeader.Filename, audioHeader.Size)
+
 	// Get secret file
 	secretHeader, err := c.FormFile("secret")
 	if err != nil {
+		log.Printf("[ERROR] [%s] EmbedHandler: No secret file provided: %v", requestID, err)
 		sendError(c, http.StatusBadRequest, "MISSING_FILES", "Secret file not provided")
 		return
 	}
+
+	log.Printf("[DEBUG] [%s] EmbedHandler: Secret file '%s' (size: %d bytes)", requestID, secretHeader.Filename, secretHeader.Size)
 
 	// Get LSB parameter
 	lsbStr := c.PostForm("lsb")
@@ -263,14 +291,30 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	}
 
 	// Create embed request
+	// Parse optional parameters
+	stegoKey := c.PostForm("stego_key")
+	useEncryption := c.PostForm("use_encryption") == "true"
+	useRandomStart := c.PostForm("use_random_start") == "true"
+
+	// Validate stego key requirements
+	if (useEncryption || useRandomStart) && stegoKey == "" {
+		sendError(c, http.StatusBadRequest, "INVALID_STEGO_KEY", "Stego key is required when encryption or random start is enabled")
+		return
+	}
+
+	if stegoKey != "" && len(stegoKey) < 4 {
+		sendError(c, http.StatusBadRequest, "WEAK_STEGO_KEY", "Stego key must be at least 4 characters long")
+		return
+	}
+
 	embedReq := &models.EmbedRequest{
 		CoverAudio:     audioData,
 		SecretFile:     secretData,
 		SecretFileName: secretHeader.Filename,
-		StegoKey:       c.PostForm("stego_key"), // Optional parameter
+		StegoKey:       stegoKey,
 		NLsb:           lsb,
-		UseEncryption:  c.PostForm("use_encryption") == "true",
-		UseRandomStart: c.PostForm("use_random_start") == "true",
+		UseEncryption:  useEncryption,
+		UseRandomStart: useRandomStart,
 	}
 
 	// Create metadata
@@ -296,7 +340,13 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	processingTime := int(time.Since(startTime).Milliseconds())
 	outputFilename := c.PostForm("output_filename")
 	if outputFilename == "" {
-		outputFilename = "stego_audio.mp3"
+		// Default extension to WAV since we're encoding to WAV for steganography preservation
+		outputFilename = "stego_audio.wav"
+	} else {
+		// Ensure the output has .wav extension
+		if !strings.HasSuffix(strings.ToLower(outputFilename), ".wav") {
+			outputFilename = strings.TrimSuffix(outputFilename, filepath.Ext(outputFilename)) + ".wav"
+		}
 	}
 
 	// Set response headers
@@ -305,18 +355,23 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	c.Header("X-Embedding-Method", fmt.Sprintf("%d-LSB", lsb))
 	c.Header("X-Secret-Size", strconv.Itoa(len(secretData)))
 	c.Header("X-Processing-Time", strconv.Itoa(processingTime))
+	c.Header("X-Output-Format", "WAV")
 
-	c.Data(http.StatusOK, "audio/mpeg", stegoAudio)
+	// Return WAV audio file (necessary for LSB steganography preservation)
+	c.Data(http.StatusOK, "audio/wav", stegoAudio)
 }
 
 // ExtractHandler handles the data extraction request
 // @Summary Extract Secret Data from Audio
-// @Description Extracts hidden secret data from a stego audio file that was created using LSB steganography. Returns the original secret file.
+// @Description Extracts hidden secret data from a stego audio file (MP3 or WAV) that was created using LSB steganography. Returns the original secret file.
 // @Tags Steganography
 // @Accept multipart/form-data
 // @Produce application/octet-stream
-// @Param stego_audio formData file true "Stego audio file containing embedded data (max 100MB)"
+// @Param stego_audio formData file true "Stego audio file (MP3 or WAV) containing embedded data (max 100MB)"
 // @Param lsb formData int true "Number of LSB bits used during embedding (1-4)" Enums(1, 2, 3, 4)
+// @Param use_encryption formData string false "Whether the embedded data was encrypted using Vigenère cipher" Enums(true, false)
+// @Param use_random_start formData string false "Whether random starting position was used during embedding" Enums(true, false)
+// @Param stego_key formData string false "Steganography key used for decryption and random position generation (required if encryption/random start was used, max 25 characters)"
 // @Param output_filename formData string false "Desired filename for the extracted secret file"
 // @Success 200 {file} file "Successfully extracted secret data"
 // @Header 200 {string} Content-Disposition "Original filename of the extracted secret"
@@ -350,9 +405,10 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 		return
 	}
 
-	// Validate file extension
-	if filepath.Ext(stegoHeader.Filename) != ".mp3" {
-		sendError(c, http.StatusBadRequest, "INVALID_FORMAT", "File must be in MP3 format")
+	// Validate file extension (support both MP3 and WAV)
+	ext := strings.ToLower(filepath.Ext(stegoHeader.Filename))
+	if ext != ".mp3" && ext != ".wav" {
+		sendError(c, http.StatusBadRequest, "INVALID_FORMAT", "File must be in MP3 or WAV format")
 		return
 	}
 
@@ -362,6 +418,12 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 		return
 	}
 
+	// Parse optional parameters
+	stegoKey := c.PostForm("stego_key")
+	useEncryption := c.PostForm("use_encryption") == "true"
+	useRandomStart := c.PostForm("use_random_start") == "true"
+	outputFilename := c.PostForm("output_filename")
+
 	// Read stego audio file
 	stegoFile, err := stegoHeader.Open()
 	if err != nil {
@@ -370,26 +432,33 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 	}
 	defer stegoFile.Close()
 
-	_, err = io.ReadAll(stegoFile)
+	stegoData, err := io.ReadAll(stegoFile)
 	if err != nil {
 		sendError(c, http.StatusInternalServerError, "PROCESSING_ERROR", "Failed to read stego audio file")
 		return
 	}
 
-	// TODO: Implement extraction - for now return a placeholder message
-	secretData := []byte("Placeholder extracted data - extraction functionality not yet implemented")
+	// Create extraction request
+	extractReq := &models.ExtractRequest{
+		StegoAudio:     stegoData,
+		NLsb:           lsb,
+		StegoKey:       stegoKey,
+		UseEncryption:  useEncryption,
+		UseRandomStart: useRandomStart,
+		OutputFilename: outputFilename,
+	}
 
-	// NOTE: In the full implementation, you would:
-	// 1. Decode MP3 to PCM
-	// 2. Extract LSB bits from samples using the provided LSB parameter
-	// 3. Reconstruct the metadata and secret data
-	// 4. Decrypt if necessary using stego key
-	// 5. Return the original secret file
+	// Perform extraction
+	secretData, filename, err := h.steganographyService.ExtractMessage(extractReq, stegoData)
+	if err != nil {
+		sendError(c, http.StatusInternalServerError, "EXTRACTION_ERROR", "Failed to extract data: "+err.Error())
+		return
+	}
 
 	processingTime := int(time.Since(startTime).Milliseconds())
-	outputFilename := c.PostForm("output_filename")
+
 	if outputFilename == "" {
-		outputFilename = "extracted_secret.bin"
+		outputFilename = filename
 	}
 
 	// Set response headers

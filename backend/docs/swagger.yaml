@@ -73,10 +73,10 @@ paths:
       consumes:
       - multipart/form-data
       description: Calculates the maximum size of a secret file (in bytes) that can
-        be embedded into an uploaded MP3 file using the multiple-LSB method. The capacity
-        is returned for 1, 2, 3, and 4 LSBs.
+        be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB
+        method. The capacity is returned for 1, 2, 3, and 4 LSBs.
       parameters:
-      - description: MP3 audio file to calculate capacity for.
+      - description: Audio file (MP3 or WAV) to calculate capacity for.
         in: formData
         name: audio
         required: true
@@ -93,7 +93,7 @@ paths:
           schema:
             $ref: '#/definitions/handlers.CapacityResponse'
         "400":
-          description: 'Bad Request: No file uploaded, file is not an MP3, or file
+          description: 'Bad Request: No file uploaded, file is not MP3/WAV, or file
             is corrupted.'
           schema:
             $ref: '#/definitions/models.ErrorResponse'
@@ -113,7 +113,8 @@ paths:
       consumes:
       - multipart/form-data
       description: Embeds a secret file into an MP3 audio file using LSB steganography.
-        Returns the stego audio file with embedded data and quality metrics.
+        Returns the stego audio file in MP3 format with embedded data and quality
+        metrics.
       parameters:
       - description: MP3 audio file for embedding (max 100MB)
         in: formData
@@ -159,7 +160,7 @@ paths:
         name: output_filename
         type: string
       produces:
-      - application/octet-stream
+      - audio/mpeg
       responses:
         "200":
           description: Successfully embedded secret data
@@ -201,10 +202,10 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Extracts hidden secret data from a stego audio file that was created
-        using LSB steganography. Returns the original secret file.
+      description: Extracts hidden secret data from a stego audio file (MP3 or WAV)
+        that was created using LSB steganography. Returns the original secret file.
       parameters:
-      - description: Stego audio file containing embedded data (max 100MB)
+      - description: Stego audio file (MP3 or WAV) containing embedded data (max 100MB)
         in: formData
         name: stego_audio
         required: true
@@ -219,6 +220,25 @@ paths:
         name: lsb
         required: true
         type: integer
+      - description: Whether the embedded data was encrypted using Vigenère cipher
+        enum:
+        - "true"
+        - "false"
+        in: formData
+        name: use_encryption
+        type: string
+      - description: Whether random starting position was used during embedding
+        enum:
+        - "true"
+        - "false"
+        in: formData
+        name: use_random_start
+        type: string
+      - description: Steganography key used for decryption and random position generation
+          (required if encryption/random start was used, max 25 characters)
+        in: formData
+        name: stego_key
+        type: string
       - description: Desired filename for the extracted secret file
         in: formData
         name: output_filename
