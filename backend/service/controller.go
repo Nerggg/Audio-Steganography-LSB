@@ -1,51 +1,76 @@
-package controller
+package service
 
 import (
-    "bytes"
-    "io"
-    "errors"
+	"bytes"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
 	"math"
 
-    "github.com/hajimehoshi/go-mp3"
-    "github.com/Nerggg/Audio-Steganography-LSB/backend/models"
+	"github.com/Nerggg/Audio-Steganography-LSB/backend/models"
+	"github.com/hajimehoshi/go-mp3"
 )
 
-func CalculateCapacity(audioData []byte) (*models.CapacityResult, error) {
-    audioReader := bytes.NewReader(audioData)
+// steganfunc (a *audioService) CalculatePSNR(original, modified []byte) float64 {graphyService implements the SteganographyService interface
+type steganographyService struct{}
 
-    decoder, err := mp3.NewDecoder(audioReader)
-    if err != nil {
-        return nil, models.ErrInvalidMP3
-    }
+// cryptographyService implements the CryptographyService interface
+type cryptographyService struct{}
 
-    pcmData, err := io.ReadAll(decoder)
-    if err != nil {
-        return nil, errors.New("could not read decoded audio stream: " + err.Error())
-    }
+// audioService implements the AudioService interface
+type audioService struct{}
 
-    totalSamples := len(pcmData) / 2
-
-    if len(pcmData)%2 != 0 {
-        totalSamples = (len(pcmData) - 1) / 2
-    }
-
-    if totalSamples == 0 {
-        return nil, models.ErrInvalidMP3
-    }
-
-    capacities := &models.CapacityResult{
-        OneLSB:   (totalSamples * 1) / 8,
-        TwoLSB:   (totalSamples * 2) / 8,
-        ThreeLSB: (totalSamples * 3) / 8,
-        FourLSB:  (totalSamples * 4) / 8,
-    }
-
-    return capacities, nil
+// NewSteganographyService creates a new steganography service instance
+func NewSteganographyService() SteganographyService {
+	return &steganographyService{}
 }
 
-// createMetadata creates metadata to be embedded with the secret file
-func CreateMetadata(filename string, fileSize int, useEncryption, useRandomStart bool, nLsb int) []byte {
+// NewCryptographyService creates a new cryptography service instance
+func NewCryptographyService() CryptographyService {
+	return &cryptographyService{}
+}
+
+// NewAudioService creates a new audio service instance
+func NewAudioService() AudioService {
+	return &audioService{}
+}
+
+func (s *steganographyService) CalculateCapacity(audioData []byte) (*models.CapacityResult, error) {
+	audioReader := bytes.NewReader(audioData)
+
+	decoder, err := mp3.NewDecoder(audioReader)
+	if err != nil {
+		return nil, models.ErrInvalidMP3
+	}
+
+	pcmData, err := io.ReadAll(decoder)
+	if err != nil {
+		return nil, errors.New("could not read decoded audio stream: " + err.Error())
+	}
+
+	totalSamples := len(pcmData) / 2
+
+	if len(pcmData)%2 != 0 {
+		totalSamples = (len(pcmData) - 1) / 2
+	}
+
+	if totalSamples == 0 {
+		return nil, models.ErrInvalidMP3
+	}
+
+	capacities := &models.CapacityResult{
+		OneLSB:   (totalSamples * 1) / 8,
+		TwoLSB:   (totalSamples * 2) / 8,
+		ThreeLSB: (totalSamples * 3) / 8,
+		FourLSB:  (totalSamples * 4) / 8,
+	}
+
+	return capacities, nil
+}
+
+// CreateMetadata creates metadata to be embedded with the secret file
+func (s *steganographyService) CreateMetadata(filename string, fileSize int, useEncryption, useRandomStart bool, nLsb int) []byte {
 	var metadata bytes.Buffer
 
 	// Magic signature (4 bytes)
@@ -82,8 +107,7 @@ func CreateMetadata(filename string, fileSize int, useEncryption, useRandomStart
 	return metadata.Bytes()
 }
 
-// embedMessage embeds the secret message into the cover audio
-func EmbedMessage(req *models.EmbedRequest, secretData, metadata []byte) ([]byte, float64, error) {
+func (s *steganographyService) EmbedMessage(req *models.EmbedRequest, secretData []byte, metadata []byte) ([]byte, float64, error) {
 	// Decode MP3 to PCM
 	audioReader := bytes.NewReader(req.CoverAudio)
 	decoder, err := mp3.NewDecoder(audioReader)
@@ -118,12 +142,36 @@ func EmbedMessage(req *models.EmbedRequest, secretData, metadata []byte) ([]byte
 	}
 
 	// Calculate PSNR
-	psnr := calculatePSNR(originalPCM, pcmData)
+	audioSvc := NewAudioService()
+	psnr := audioSvc.CalculatePSNR(originalPCM, pcmData)
 
 	// For this implementation, we'll return the modified PCM as raw data
 	// In a real implementation, you'd need to encode back to MP3
-	// This is a simplified approach - you might need a proper MP3 encoder
 	return pcmData, psnr, nil
+}
+
+func (s *steganographyService) ExtractMessage(req *models.ExtractRequest, audioData []byte) ([]byte, string, error) {
+	// Decode MP3 to PCM
+	audioReader := bytes.NewReader(req.StegoAudio)
+	decoder, err := mp3.NewDecoder(audioReader)
+	if err != nil {
+		return nil, "", errors.New("failed to decode MP3: " + err.Error())
+	}
+
+	pcmData, err := io.ReadAll(decoder)
+	if err != nil {
+		return nil, "", errors.New("failed to read PCM data: " + err.Error())
+	}
+
+	// TODO: Implement full extraction logic
+	// For now return placeholder data based on PCM size
+	extractedData := []byte(fmt.Sprintf("Placeholder extracted data from %d bytes PCM", len(pcmData)))
+	filename := req.OutputFilename
+	if filename == "" {
+		filename = "extracted_secret.bin"
+	}
+
+	return extractedData, filename, nil
 }
 
 // bytesToBits converts byte array to bit array
@@ -185,8 +233,8 @@ func embedBitsIntoSamples(pcmData []byte, bits []int, startPos, nLsb int) error 
 	return nil
 }
 
-// calculatePSNR calculates Peak Signal-to-Noise Ratio
-func calculatePSNR(original, modified []byte) float64 {
+// CalculatePSNR calculates Peak Signal-to-Noise Ratio
+func (a *audioService) CalculatePSNR(original, modified []byte) float64 {
 	if len(original) != len(modified) {
 		return 0
 	}
@@ -213,8 +261,8 @@ func calculatePSNR(original, modified []byte) float64 {
 	return psnr
 }
 
-// vigenereCipher performs Vigenère cipher encryption/decryption
-func VigenereCipher(data []byte, key string, encrypt bool) []byte {
+// VigenereCipher performs Vigenère cipher encryption/decryption
+func (c *cryptographyService) VigenereCipher(data []byte, key string, encrypt bool) []byte {
 	if len(key) == 0 {
 		return data
 	}
