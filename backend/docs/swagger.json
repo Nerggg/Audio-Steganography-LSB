@@ -5,7 +5,7 @@
     },
     "basePath": "/api/v1",
     "paths": {
-        "/api/capacity": {
+        "/capacity": {
             "post": {
                 "description": "Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded MP3 file using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.",
                 "consumes": [
@@ -31,33 +31,39 @@
                     "200": {
                         "description": "Successfully calculated embedding capacity.",
                         "schema": {
-                            "$ref": "#/definitions/models.CapacityResult"
+                            "$ref": "#/definitions/handlers.CapacityResponse"
+                        },
+                        "headers": {
+                            "X-Processing-Time": {
+                                "type": "int",
+                                "description": "Time taken to process the request in milliseconds"
+                            }
                         }
                     },
                     "400": {
                         "description": "Bad Request: No file uploaded, file is not an MP3, or file is corrupted.",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "File too large",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error: Failed to process the file.",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/models.ErrorResponse"
                         }
                     }
                 }
             }
         },
-        "/api/embed": {
+        "/embed": {
             "post": {
-                "description": "Embeds a secret file into an MP3 cover audio file using the multiple-LSB steganography method. Supports encryption with extended Vigenère cipher, random starting position, and configurable LSB depth (1-4 bits). Returns the stego-audio file with PSNR quality measurement.",
+                "description": "Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file with embedded data and quality metrics.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -67,26 +73,19 @@
                 "tags": [
                     "Steganography"
                 ],
-                "summary": "Embed Secret Message into Audio File",
+                "summary": "Embed Secret Data in Audio",
                 "parameters": [
                     {
                         "type": "file",
-                        "description": "MP3 cover audio file to embed the secret message into",
-                        "name": "cover_audio",
+                        "description": "MP3 audio file for embedding (max 100MB)",
+                        "name": "audio",
                         "in": "formData",
                         "required": true
                     },
                     {
                         "type": "file",
-                        "description": "Secret file to be hidden (any file type and size)",
-                        "name": "secret_file",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Steganography key used for encryption and random seed generation (max 25 characters)",
-                        "name": "stego_key",
+                        "description": "Secret file to embed (max 50MB)",
+                        "name": "secret",
                         "in": "formData",
                         "required": true
                     },
@@ -98,8 +97,8 @@
                             4
                         ],
                         "type": "integer",
-                        "description": "Number of LSB bits to use for embedding (1, 2, 3, or 4)",
-                        "name": "n_lsb",
+                        "description": "Number of LSB bits to use for embedding (1-4)",
+                        "name": "lsb",
                         "in": "formData",
                         "required": true
                     },
@@ -111,8 +110,7 @@
                         "type": "string",
                         "description": "Whether to encrypt the secret file using Vigenère cipher",
                         "name": "use_encryption",
-                        "in": "formData",
-                        "required": true
+                        "in": "formData"
                     },
                     {
                         "enum": [
@@ -122,45 +120,177 @@
                         "type": "string",
                         "description": "Whether to use random starting position for embedding",
                         "name": "use_random_start",
-                        "in": "formData",
-                        "required": true
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Steganography key used for encryption and random seed generation (max 25 characters)",
+                        "name": "stego_key",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Desired filename for the output stego audio",
+                        "name": "output_filename",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Successfully embedded message into audio file. Returns stego-audio MP3 file.",
+                        "description": "Successfully embedded secret data",
                         "schema": {
                             "type": "file"
                         },
                         "headers": {
                             "Content-Disposition": {
                                 "type": "string",
-                                "description": "attachment; filename=\\\"filename_stego.mp3\\"
+                                "description": "Filename for the stego audio file"
                             },
-                            "Content-Type": {
+                            "X-Embedding-Method": {
                                 "type": "string",
-                                "description": "application/octet-stream"
+                                "description": "LSB method used for embedding"
                             },
                             "X-PSNR-Value": {
-                                "type": "string",
-                                "description": "Peak Signal-to-Noise Ratio value (e.g., \\\"38.54\\\")"
+                                "type": "number",
+                                "description": "Peak Signal-to-Noise Ratio indicating audio quality after embedding"
+                            },
+                            "X-Processing-Time": {
+                                "type": "int",
+                                "description": "Time taken to process the request in milliseconds"
+                            },
+                            "X-Secret-Size": {
+                                "type": "int",
+                                "description": "Size of embedded secret in bytes"
                             }
                         }
                     },
                     "400": {
-                        "description": "Bad Request: Missing required parameters, invalid file format, or invalid parameter values",
+                        "description": "Bad Request: Invalid parameters or file issues",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
                     "413": {
-                        "description": "Payload Too Large: Secret file size exceeds embedding capacity",
+                        "description": "Files too large",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
                     "500": {
-                        "description": "Internal Server Error: Failed to process files or embed message",
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/extract": {
+            "post": {
+                "description": "Extracts hidden secret data from a stego audio file that was created using LSB steganography. Returns the original secret file.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "Steganography"
+                ],
+                "summary": "Extract Secret Data from Audio",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Stego audio file containing embedded data (max 100MB)",
+                        "name": "stego_audio",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            1,
+                            2,
+                            3,
+                            4
+                        ],
+                        "type": "integer",
+                        "description": "Number of LSB bits used during embedding (1-4)",
+                        "name": "lsb",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Desired filename for the extracted secret file",
+                        "name": "output_filename",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successfully extracted secret data",
+                        "schema": {
+                            "type": "file"
+                        },
+                        "headers": {
+                            "Content-Disposition": {
+                                "type": "string",
+                                "description": "Original filename of the extracted secret"
+                            },
+                            "X-Extraction-Method": {
+                                "type": "string",
+                                "description": "LSB method used for extraction"
+                            },
+                            "X-Processing-Time": {
+                                "type": "int",
+                                "description": "Time taken to process the request in milliseconds"
+                            },
+                            "X-Secret-Size": {
+                                "type": "int",
+                                "description": "Size of extracted secret in bytes"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request: Invalid file or extraction parameters",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "File too large",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Returns the health status of the API service",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Health Check",
+                "responses": {
+                    "200": {
+                        "description": "Service is healthy",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.HealthResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -170,6 +300,66 @@
         }
     },
     "definitions": {
+        "handlers.CapacityResponse": {
+            "type": "object",
+            "properties": {
+                "capacities": {
+                    "$ref": "#/definitions/models.CapacityResult"
+                },
+                "file_info": {
+                    "$ref": "#/definitions/handlers.FileInfo"
+                },
+                "processing_time_ms": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.FileInfo": {
+            "type": "object",
+            "properties": {
+                "bitrate": {
+                    "type": "integer"
+                },
+                "channels": {
+                    "type": "integer"
+                },
+                "duration_seconds": {
+                    "type": "number"
+                },
+                "filename": {
+                    "type": "string"
+                },
+                "sample_rate": {
+                    "type": "integer"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "dependencies": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "uptime": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "models.CapacityResult": {
             "type": "object",
             "properties": {

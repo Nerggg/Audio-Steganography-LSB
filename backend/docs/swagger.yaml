@@ -1,5 +1,44 @@
 basePath: /api/v1
 definitions:
+  handlers.CapacityResponse:
+    properties:
+      capacities:
+        $ref: '#/definitions/models.CapacityResult'
+      file_info:
+        $ref: '#/definitions/handlers.FileInfo'
+      processing_time_ms:
+        type: integer
+    type: object
+  handlers.FileInfo:
+    properties:
+      bitrate:
+        type: integer
+      channels:
+        type: integer
+      duration_seconds:
+        type: number
+      filename:
+        type: string
+      sample_rate:
+        type: integer
+      size_bytes:
+        type: integer
+    type: object
+  handlers.HealthResponse:
+    properties:
+      dependencies:
+        additionalProperties:
+          type: string
+        type: object
+      status:
+        type: string
+      timestamp:
+        type: string
+      uptime:
+        type: integer
+      version:
+        type: string
+    type: object
   models.CapacityResult:
     properties:
       1_lsb:
@@ -29,7 +68,7 @@ definitions:
 info:
   contact: {}
 paths:
-  /api/capacity:
+  /capacity:
     post:
       consumes:
       - multipart/form-data
@@ -47,57 +86,53 @@ paths:
       responses:
         "200":
           description: Successfully calculated embedding capacity.
+          headers:
+            X-Processing-Time:
+              description: Time taken to process the request in milliseconds
+              type: int
           schema:
-            $ref: '#/definitions/models.CapacityResult'
+            $ref: '#/definitions/handlers.CapacityResponse'
         "400":
           description: 'Bad Request: No file uploaded, file is not an MP3, or file
             is corrupted.'
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/models.ErrorResponse'
+        "413":
+          description: File too large
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
         "500":
           description: 'Internal Server Error: Failed to process the file.'
           schema:
-            additionalProperties:
-              type: string
-            type: object
+            $ref: '#/definitions/models.ErrorResponse'
       summary: Calculate Audio Embedding Capacity
       tags:
       - Steganography
-  /api/embed:
+  /embed:
     post:
       consumes:
       - multipart/form-data
-      description: Embeds a secret file into an MP3 cover audio file using the multiple-LSB
-        steganography method. Supports encryption with extended Vigenère cipher, random
-        starting position, and configurable LSB depth (1-4 bits). Returns the stego-audio
-        file with PSNR quality measurement.
+      description: Embeds a secret file into an MP3 audio file using LSB steganography.
+        Returns the stego audio file with embedded data and quality metrics.
       parameters:
-      - description: MP3 cover audio file to embed the secret message into
+      - description: MP3 audio file for embedding (max 100MB)
         in: formData
-        name: cover_audio
+        name: audio
         required: true
         type: file
-      - description: Secret file to be hidden (any file type and size)
+      - description: Secret file to embed (max 50MB)
         in: formData
-        name: secret_file
+        name: secret
         required: true
         type: file
-      - description: Steganography key used for encryption and random seed generation
-          (max 25 characters)
-        in: formData
-        name: stego_key
-        required: true
-        type: string
-      - description: Number of LSB bits to use for embedding (1, 2, 3, or 4)
+      - description: Number of LSB bits to use for embedding (1-4)
         enum:
         - 1
         - 2
         - 3
         - 4
         in: formData
-        name: n_lsb
+        name: lsb
         required: true
         type: integer
       - description: Whether to encrypt the secret file using Vigenère cipher
@@ -106,7 +141,6 @@ paths:
         - "false"
         in: formData
         name: use_encryption
-        required: true
         type: string
       - description: Whether to use random starting position for embedding
         enum:
@@ -114,40 +148,131 @@ paths:
         - "false"
         in: formData
         name: use_random_start
-        required: true
+        type: string
+      - description: Steganography key used for encryption and random seed generation
+          (max 25 characters)
+        in: formData
+        name: stego_key
+        type: string
+      - description: Desired filename for the output stego audio
+        in: formData
+        name: output_filename
         type: string
       produces:
       - application/octet-stream
       responses:
         "200":
-          description: Successfully embedded message into audio file. Returns stego-audio
-            MP3 file.
+          description: Successfully embedded secret data
           headers:
             Content-Disposition:
-              description: attachment; filename=\"filename_stego.mp3\
+              description: Filename for the stego audio file
               type: string
-            Content-Type:
-              description: application/octet-stream
+            X-Embedding-Method:
+              description: LSB method used for embedding
               type: string
             X-PSNR-Value:
-              description: Peak Signal-to-Noise Ratio value (e.g., \"38.54\")
-              type: string
+              description: Peak Signal-to-Noise Ratio indicating audio quality after
+                embedding
+              type: number
+            X-Processing-Time:
+              description: Time taken to process the request in milliseconds
+              type: int
+            X-Secret-Size:
+              description: Size of embedded secret in bytes
+              type: int
           schema:
             type: file
         "400":
-          description: 'Bad Request: Missing required parameters, invalid file format,
-            or invalid parameter values'
+          description: 'Bad Request: Invalid parameters or file issues'
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "413":
-          description: 'Payload Too Large: Secret file size exceeds embedding capacity'
+          description: Files too large
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "500":
-          description: 'Internal Server Error: Failed to process files or embed message'
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/models.ErrorResponse'
-      summary: Embed Secret Message into Audio File
+      summary: Embed Secret Data in Audio
       tags:
       - Steganography
+  /extract:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Extracts hidden secret data from a stego audio file that was created
+        using LSB steganography. Returns the original secret file.
+      parameters:
+      - description: Stego audio file containing embedded data (max 100MB)
+        in: formData
+        name: stego_audio
+        required: true
+        type: file
+      - description: Number of LSB bits used during embedding (1-4)
+        enum:
+        - 1
+        - 2
+        - 3
+        - 4
+        in: formData
+        name: lsb
+        required: true
+        type: integer
+      - description: Desired filename for the extracted secret file
+        in: formData
+        name: output_filename
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: Successfully extracted secret data
+          headers:
+            Content-Disposition:
+              description: Original filename of the extracted secret
+              type: string
+            X-Extraction-Method:
+              description: LSB method used for extraction
+              type: string
+            X-Processing-Time:
+              description: Time taken to process the request in milliseconds
+              type: int
+            X-Secret-Size:
+              description: Size of extracted secret in bytes
+              type: int
+          schema:
+            type: file
+        "400":
+          description: 'Bad Request: Invalid file or extraction parameters'
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "413":
+          description: File too large
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Extract Secret Data from Audio
+      tags:
+      - Steganography
+  /health:
+    get:
+      description: Returns the health status of the API service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Service is healthy
+          schema:
+            $ref: '#/definitions/handlers.HealthResponse'
+        "503":
+          description: Service unavailable
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Health Check
+      tags:
+      - System
 swagger: "2.0"
