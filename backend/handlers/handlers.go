@@ -65,13 +65,14 @@ type FileInfo struct {
 }
 
 // HealthHandler handles the health check endpoint
-// @Summary Health Check
-// @Description Returns the health status of the API service
-// @Tags System
-// @Produce json
-// @Success 200 {object} HealthResponse "Service is healthy"
-// @Failure 503 {object} models.ErrorResponse "Service unavailable"
-// @Router /health [get]
+//
+//	@Summary		Health Check
+//	@Description	Returns the health status of the API service
+//	@Tags			System
+//	@Produce		json
+//	@Success		200	{object}	HealthResponse			"Service is healthy"
+//	@Failure		503	{object}	models.ErrorResponse	"Service unavailable"
+//	@Router			/health [get]
 func (h *Handlers) HealthHandler(c *gin.Context) {
 	startTime := time.Now()
 
@@ -92,18 +93,19 @@ func (h *Handlers) HealthHandler(c *gin.Context) {
 }
 
 // CalculateCapacityHandler handles the capacity calculation request
-// @Summary Calculate Audio Embedding Capacity
-// @Description Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.
-// @Tags Steganography
-// @Accept multipart/form-data
-// @Produce json
-// @Param audio formData file true "Audio file (MP3 or WAV) to calculate capacity for."
-// @Success 200 {object} CapacityResponse "Successfully calculated embedding capacity."
-// @Header 200 {int} X-Processing-Time "Time taken to process the request in milliseconds"
-// @Failure 400 {object} models.ErrorResponse "Bad Request: No file uploaded, file is not MP3/WAV, or file is corrupted."
-// @Failure 413 {object} models.ErrorResponse "File too large"
-// @Failure 500 {object} models.ErrorResponse "Internal Server Error: Failed to process the file."
-// @Router /capacity [post]
+//
+//	@Summary		Calculate Audio Embedding Capacity
+//	@Description	Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.
+//	@Tags			Steganography
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Param			audio	formData	file					true	"Audio file (MP3 or WAV) to calculate capacity for."
+//	@Success		200		{object}	CapacityResponse		"Successfully calculated embedding capacity."
+//	@Header			200		{int}		X-Processing-Time		"Time taken to process the request in milliseconds"
+//	@Failure		400		{object}	models.ErrorResponse	"Bad Request: No file uploaded, file is not MP3/WAV, or file is corrupted."
+//	@Failure		413		{object}	models.ErrorResponse	"File too large"
+//	@Failure		500		{object}	models.ErrorResponse	"Internal Server Error: Failed to process the file."
+//	@Router			/capacity [post]
 func (h *Handlers) CalculateCapacityHandler(c *gin.Context) {
 	startTime := time.Now()
 	requestID := c.GetHeader("X-Request-ID")
@@ -181,28 +183,29 @@ func (h *Handlers) CalculateCapacityHandler(c *gin.Context) {
 }
 
 // EmbedHandler handles the message embedding request
-// @Summary Embed Secret Data in Audio
-// @Description Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format with embedded data and quality metrics.
-// @Tags Steganography
-// @Accept multipart/form-data
-// @Produce audio/mpeg
-// @Param audio formData file true "MP3 audio file for embedding (max 100MB)"
-// @Param secret formData file true "Secret file to embed (max 50MB)"
-// @Param lsb formData int true "Number of LSB bits to use for embedding (1-4)" Enums(1, 2, 3, 4)
-// @Param use_encryption formData string false "Whether to encrypt the secret file using Vigenère cipher" Enums(true, false)
-// @Param use_random_start formData string false "Whether to use random starting position for embedding" Enums(true, false)
-// @Param stego_key formData string false "Steganography key used for encryption and random seed generation (max 25 characters)"
-// @Param output_filename formData string false "Desired filename for the output stego audio"
-// @Success 200 {file} file "Successfully embedded secret data"
-// @Header 200 {string} Content-Disposition "Filename for the stego audio file"
-// @Header 200 {number} X-PSNR-Value "Peak Signal-to-Noise Ratio indicating audio quality after embedding"
-// @Header 200 {string} X-Embedding-Method "LSB method used for embedding"
-// @Header 200 {int} X-Secret-Size "Size of embedded secret in bytes"
-// @Header 200 {int} X-Processing-Time "Time taken to process the request in milliseconds"
-// @Failure 400 {object} models.ErrorResponse "Bad Request: Invalid parameters or file issues"
-// @Failure 413 {object} models.ErrorResponse "Files too large"
-// @Failure 500 {object} models.ErrorResponse "Internal Server Error"
-// @Router /embed [post]
+//
+//	@Summary		Embed Secret Data in Audio
+//	@Description	Embeds a secret file into an audio file (MP3 or WAV) using LSB steganography. If input is WAV, only the data chunk (audio samples) is modified and headers/metadata remain untouched. Output is provided in WAV format to preserve LSB data.
+//	@Tags			Steganography
+//	@Accept			multipart/form-data
+//	@Produce		audio/wav
+//	@Param			audio				formData	file					true	"Audio file for embedding (MP3 or WAV, max 100MB)"
+//	@Param			secret				formData	file					true	"Secret file to embed (max 50MB)"
+//	@Param			lsb					formData	int						true	"Number of LSB bits to use for embedding (1-4)"				Enums(1, 2, 3, 4)
+//	@Param			use_encryption		formData	string					false	"Whether to encrypt the secret file using Vigenère cipher"	Enums(true, false)
+//	@Param			use_random_start	formData	string					false	"Whether to use random starting position for embedding"		Enums(true, false)
+//	@Param			stego_key			formData	string					false	"Steganography key used for encryption and random seed generation (max 25 characters)"
+//	@Param			output_filename		formData	string					false	"Desired filename for the output stego audio"
+//	@Success		200					{file}		file					"Successfully embedded secret data"
+//	@Header			200					{string}	Content-Disposition		"Filename for the stego audio file"
+//	@Header			200					{number}	X-PSNR-Value			"Peak Signal-to-Noise Ratio indicating audio quality after embedding"
+//	@Header			200					{string}	X-Embedding-Method		"LSB method used for embedding"
+//	@Header			200					{int}		X-Secret-Size			"Size of embedded secret in bytes"
+//	@Header			200					{int}		X-Processing-Time		"Time taken to process the request in milliseconds"
+//	@Failure		400					{object}	models.ErrorResponse	"Bad Request: Invalid parameters or file issues"
+//	@Failure		413					{object}	models.ErrorResponse	"Files too large"
+//	@Failure		500					{object}	models.ErrorResponse	"Internal Server Error"
+//	@Router			/embed [post]
 func (h *Handlers) EmbedHandler(c *gin.Context) {
 	startTime := time.Now()
 	requestID := c.GetHeader("X-Request-ID")
@@ -245,9 +248,9 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	// Validate file extensions
-	if filepath.Ext(audioHeader.Filename) != ".mp3" {
-		sendError(c, http.StatusBadRequest, "INVALID_FORMAT", "Audio file must be in MP3 format")
+	// Validate file extension (support both MP3 and WAV)
+	if ext := strings.ToLower(filepath.Ext(audioHeader.Filename)); ext != ".mp3" && ext != ".wav" {
+		sendError(c, http.StatusBadRequest, "INVALID_FORMAT", "Audio file must be in MP3 or WAV format")
 		return
 	}
 
@@ -362,26 +365,24 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 }
 
 // ExtractHandler handles the data extraction request
-// @Summary Extract Secret Data from Audio
-// @Description Extracts hidden secret data from a stego audio file (MP3 or WAV) that was created using LSB steganography. Returns the original secret file.
-// @Tags Steganography
-// @Accept multipart/form-data
-// @Produce application/octet-stream
-// @Param stego_audio formData file true "Stego audio file (MP3 or WAV) containing embedded data (max 100MB)"
-// @Param lsb formData int true "Number of LSB bits used during embedding (1-4)" Enums(1, 2, 3, 4)
-// @Param use_encryption formData string false "Whether the embedded data was encrypted using Vigenère cipher" Enums(true, false)
-// @Param use_random_start formData string false "Whether random starting position was used during embedding" Enums(true, false)
-// @Param stego_key formData string false "Steganography key used for decryption and random position generation (required if encryption/random start was used, max 25 characters)"
-// @Param output_filename formData string false "Desired filename for the extracted secret file"
-// @Success 200 {file} file "Successfully extracted secret data"
-// @Header 200 {string} Content-Disposition "Original filename of the extracted secret"
-// @Header 200 {string} X-Extraction-Method "LSB method used for extraction"
-// @Header 200 {int} X-Secret-Size "Size of extracted secret in bytes"
-// @Header 200 {int} X-Processing-Time "Time taken to process the request in milliseconds"
-// @Failure 400 {object} models.ErrorResponse "Bad Request: Invalid file or extraction parameters"
-// @Failure 413 {object} models.ErrorResponse "File too large"
-// @Failure 500 {object} models.ErrorResponse "Internal Server Error"
-// @Router /extract [post]
+//
+//	@Summary		Extract Secret Data from Audio
+//	@Description	Extracts hidden secret data from a stego audio file (MP3 or WAV) with automatic parameter detection. The system automatically detects LSB method, encryption, and random start settings from the embedded metadata.
+//	@Tags			Steganography
+//	@Accept			multipart/form-data
+//	@Produce		application/octet-stream
+//	@Param			stego_audio		formData	file					true	"Stego audio file (MP3 or WAV) containing embedded data (max 100MB)"
+//	@Param			stego_key		formData	string					false	"Steganography key for decryption (required only if the embedded data was encrypted, max 25 characters)"
+//	@Param			output_filename	formData	string					false	"Desired filename for the extracted secret file (optional)"
+//	@Success		200				{file}		file					"Successfully extracted secret data"
+//	@Header			200				{string}	Content-Disposition		"Original filename of the extracted secret"
+//	@Header			200				{string}	X-Extraction-Method		"Auto-detected LSB method used for extraction"
+//	@Header			200				{int}		X-Secret-Size			"Size of extracted secret in bytes"
+//	@Header			200				{int}		X-Processing-Time		"Time taken to process the request in milliseconds"
+//	@Failure		400				{object}	models.ErrorResponse	"Bad Request: Invalid file format"
+//	@Failure		413				{object}	models.ErrorResponse	"File too large"
+//	@Failure		500				{object}	models.ErrorResponse	"Internal Server Error or extraction failed"
+//	@Router			/extract [post]
 func (h *Handlers) ExtractHandler(c *gin.Context) {
 	startTime := time.Now()
 
@@ -392,18 +393,7 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 		return
 	}
 
-	// Get LSB parameter
-	lsbStr := c.PostForm("lsb")
-	if lsbStr == "" {
-		sendError(c, http.StatusBadRequest, "INVALID_LSB", "LSB parameter is required")
-		return
-	}
-
-	lsb, err := strconv.Atoi(lsbStr)
-	if err != nil || lsb < 1 || lsb > 4 {
-		sendError(c, http.StatusBadRequest, "INVALID_LSB", "LSB value must be between 1 and 4")
-		return
-	}
+	// LSB and other parameters will be auto-detected from metadata
 
 	// Validate file extension (support both MP3 and WAV)
 	ext := strings.ToLower(filepath.Ext(stegoHeader.Filename))
@@ -420,8 +410,6 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 
 	// Parse optional parameters
 	stegoKey := c.PostForm("stego_key")
-	useEncryption := c.PostForm("use_encryption") == "true"
-	useRandomStart := c.PostForm("use_random_start") == "true"
 	outputFilename := c.PostForm("output_filename")
 
 	// Read stego audio file
@@ -441,10 +429,7 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 	// Create extraction request
 	extractReq := &models.ExtractRequest{
 		StegoAudio:     stegoData,
-		NLsb:           lsb,
 		StegoKey:       stegoKey,
-		UseEncryption:  useEncryption,
-		UseRandomStart: useRandomStart,
 		OutputFilename: outputFilename,
 	}
 
@@ -463,7 +448,7 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 
 	// Set response headers
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", outputFilename))
-	c.Header("X-Extraction-Method", fmt.Sprintf("%d-LSB", lsb))
+	c.Header("X-Extraction-Method", "Auto-detected LSB")
 	c.Header("X-Secret-Size", strconv.Itoa(len(secretData)))
 	c.Header("X-Processing-Time", strconv.Itoa(processingTime))
 
