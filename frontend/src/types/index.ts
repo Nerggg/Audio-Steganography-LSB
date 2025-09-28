@@ -30,6 +30,9 @@ export interface EmbedResult {
   psnr?: number
   stegoAudioUrl?: string
   message?: string
+  secretSize?: number
+  processingTime?: number
+  embeddingMethod?: string
 }
 
 export interface ExtractResult {

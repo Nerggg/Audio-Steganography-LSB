@@ -5,15 +5,12 @@ import { useState, useEffect } from "react"
 import FileUpload from "./FileUpload"
 import AudioPlayer from "./AudioPlayer"
 import Button from "./Button"
-import type { UploadedFile, EmbedOptions, EmbedResult, AppStatus, AudioCapacity } from "../types"
+import type { UploadedFile, EmbedOptions, EmbedResult, AppStatus } from "../types"
+import StatusDisplay from "./StatusDisplay"
 
-interface EmbedPanelProps {
-  onStatusUpdate: (status: AppStatus) => void
-  onCapacityUpdate: (capacity: AudioCapacity) => void
-  onEmbedComplete: (result: EmbedResult) => void
-}
+interface EmbedPanelProps {}
 
-const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdate, onEmbedComplete }) => {
+const EmbedPanel: React.FC<EmbedPanelProps> = () => {
   const [coverAudio, setCoverAudio] = useState<UploadedFile | undefined>()
   const [stegoAudio, setStegoAudio] = useState<UploadedFile | undefined>()
   const [secretFile, setSecretFile] = useState<UploadedFile | undefined>()
@@ -27,35 +24,77 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
 
   const API_URL = "http://localhost:8080"
 
-  // Calculate capacity when cover audio is loaded
-  useEffect(() => {
-    if (coverAudio) {
-      // Simulate capacity calculation
-      onStatusUpdate({
+  const [status, setStatus] = useState<AppStatus>({
+    isLoading: false,
+    message: "CYBERSTEG TERMINAL READY - SELECT OPERATION MODE",
+    type: "info",
+  })
+  const [capacities, setCapacities] = useState<{ [key: string]: number }>({})
+  const [psnr, setPsnr] = useState<number | undefined>()
+
+  const handleStatusUpdate = (newStatus: AppStatus) => {
+    setStatus(newStatus)
+  }
+
+  const handleEmbedComplete = (result: EmbedResult) => {
+    if (result.success && result.psnr) {
+      setPsnr(result.psnr)
+      setStatus({
+        isLoading: false,
+        message: `MESSAGE EMBEDDED SUCCESSFULLY! PSNR: ${result.psnr.toFixed(2)} dB`,
+        type: "success",
+      })
+    } else {
+      setStatus({
+        isLoading: false,
+        message: result.message || "EMBEDDING OPERATION FAILED",
+        type: "error",
+      })
+    }
+  }
+
+  const handleCoverAudioSelect = async (file: UploadedFile) => {
+    setCoverAudio(file)
+    setStegoAudio(undefined) // Clear previous result
+    setCapacities({}) // Reset capacities
+
+    if (file) {
+      handleStatusUpdate({
         isLoading: true,
         message: "Analyzing audio capacity...",
         type: "info",
       })
 
-      setTimeout(() => {
-        const capacity = {
-          maxBytes: Math.floor(coverAudio.size * 0.1), // Simulate 10% capacity
-          maxCharacters: Math.floor(coverAudio.size * 0.08), // Slightly less for characters
+      try {
+        const formData = new FormData()
+        formData.append("audio", file.file)
+
+        const response = await fetch(`${API_URL}/api/v1/capacity`, {
+          method: "POST",
+          body: formData,
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.message || "Failed to calculate capacity")
         }
 
-        onCapacityUpdate(capacity)
-        onStatusUpdate({
+        const data = await response.json()
+        setCapacities(data.capacities)
+
+        handleStatusUpdate({
           isLoading: false,
-          message: `Audio loaded. Capacity: ${capacity.maxCharacters} characters`,
+          message: "Audio capacity analyzed successfully",
           type: "success",
         })
-      }, 1500)
+      } catch (error) {
+        handleStatusUpdate({
+          isLoading: false,
+          message: error instanceof Error ? error.message : "Failed to analyze capacity",
+          type: "error",
+        })
+      }
     }
-  }, [coverAudio, onStatusUpdate, onCapacityUpdate])
-
-  const handleCoverAudioSelect = (file: UploadedFile) => {
-    setCoverAudio(file)
-    setStegoAudio(undefined) // Clear previous result
   }
 
   const handleSecretFileSelect = (file: UploadedFile) => {
@@ -66,7 +105,7 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
     if (!coverAudio || !secretFile) return
 
     setIsEmbedding(true)
-    onStatusUpdate({
+    handleStatusUpdate({
       isLoading: true,
       message: "Embedding file into audio...",
       type: "info",
@@ -118,8 +157,8 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
         embeddingMethod: response.headers.get("X-Embedding-Method") || "LSB",
       }
 
-      onEmbedComplete(result)
-      onStatusUpdate({
+      handleEmbedComplete(result)
+      handleStatusUpdate({
         isLoading: false,
         message: "Embedding completed successfully",
         type: "success",
@@ -129,8 +168,8 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
         success: false,
         message: error instanceof Error ? error.message : "Failed to embed file",
       }
-      onEmbedComplete(result)
-      onStatusUpdate({
+      handleEmbedComplete(result)
+      handleStatusUpdate({
         isLoading: false,
         message: error instanceof Error ? error.message : "Failed to embed file",
         type: "error",
@@ -151,7 +190,33 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
     document.body.removeChild(link)
   }
 
-  const isEmbedReady = coverAudio && secretFile && (options.encrypt || options.randomStart ? options.stegKey.trim() : true)
+  // Check capacity sufficiency when relevant states change
+  useEffect(() => {
+    if (coverAudio && secretFile && Object.keys(capacities).length > 0) {
+      const selectedCapacity = capacities[`${options.nLSB}_lsb`] || 0
+      if (secretFile.size > selectedCapacity) {
+        handleStatusUpdate({
+          isLoading: false,
+          message: `Secret file too large for selected LSB configuration. Max capacity: ${selectedCapacity} bytes`,
+          type: "error",
+        })
+      } else {
+        handleStatusUpdate({
+          isLoading: false,
+          message: "Capacity sufficient for embedding",
+          type: "success",
+        })
+      }
+    }
+  }, [coverAudio, secretFile, options.nLSB, capacities])
+
+  const isCapacitySufficient = () => {
+    if (!secretFile || Object.keys(capacities).length === 0) return true
+    const selectedCapacity = capacities[`${options.nLSB}_lsb`] || 0
+    return secretFile.size <= selectedCapacity
+  }
+
+  const isEmbedReady = coverAudio && secretFile && (options.encrypt || options.randomStart ? options.stegKey.trim() : true) && isCapacitySufficient()
 
   const getKeyPlaceholder = () => {
     if (options.encrypt && options.randomStart) {
@@ -223,7 +288,7 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
             </div>
 
             <input
-              type="password"
+              type="text"
               value={options.stegKey}
               onChange={(e) => setOptions({ ...options, stegKey: e.target.value })}
               placeholder={getKeyPlaceholder()}
@@ -261,6 +326,8 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
           </div>
         </div>
       </div>
+
+      <StatusDisplay status={status} psnr={psnr} />
 
       {/* Embed Button */}
       <div className="flex justify-center">

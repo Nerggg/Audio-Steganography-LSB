@@ -6,13 +6,11 @@ import FileUpload from "./FileUpload"
 import AudioPlayer from "./AudioPlayer"
 import Button from "./Button"
 import type { UploadedFile, ExtractOptions, ExtractResult, AppStatus } from "../types"
+import StatusDisplay from "./StatusDisplay"
 
-interface ExtractPanelProps {
-  onStatusUpdate: (status: AppStatus) => void
-  onExtractComplete: (result: ExtractResult) => void
-}
+interface ExtractPanelProps {}
 
-const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractComplete }) => {
+const ExtractPanel: React.FC<ExtractPanelProps> = () => {
   const [stegoAudio, setStegoAudio] = useState<UploadedFile | undefined>()
   const [options, setOptions] = useState<ExtractOptions>({
     stegKey: "",
@@ -26,6 +24,33 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
 
   const API_URL = "http://localhost:8080"
 
+  const [status, setStatus] = useState<AppStatus>({
+    isLoading: false,
+    message: "CYBERSTEG TERMINAL READY - SELECT OPERATION MODE",
+    type: "info",
+  })
+  const [psnr, _] = useState<number | undefined>()
+
+  const handleStatusUpdate = (newStatus: AppStatus) => {
+    setStatus(newStatus)
+  }
+
+  const handleExtractComplete = (result: ExtractResult) => {
+    if (result.success) {
+      setStatus({
+        isLoading: false,
+        message: "MESSAGE EXTRACTION COMPLETED SUCCESSFULLY",
+        type: "success",
+      })
+    } else {
+      setStatus({
+        isLoading: false,
+        message: result.error || "EXTRACTION OPERATION FAILED",
+        type: "error",
+      })
+    }
+  }
+
   const handleStegoAudioSelect = (file: UploadedFile) => {
     setStegoAudio(file)
     setExtractedFileInfo(null)
@@ -36,7 +61,7 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
 
     setIsExtracting(true)
     setExtractedFileInfo(null)
-    onStatusUpdate({
+    handleStatusUpdate({
       isLoading: true,
       message: "Analyzing steganographic audio...",
       type: "info",
@@ -77,13 +102,13 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
         success: true,
         message: "File extracted successfully",
       }
-      onExtractComplete(result)
+      handleExtractComplete(result)
     } catch (error) {
       const result: ExtractResult = {
         success: false,
         error: error instanceof Error ? error.message : "Failed to extract file",
       }
-      onExtractComplete(result)
+      handleExtractComplete(result)
     } finally {
       setIsExtracting(false)
     }
@@ -111,13 +136,15 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
         </div>
 
         <input
-          type="password"
+          type="text"
           value={options.stegKey}
           onChange={(e) => setOptions({ ...options, stegKey: e.target.value })}
           placeholder="Enter decryption key if message is encrypted or using random start position..."
           className="w-full bg-black/50 border border-pink-400/30 rounded-lg p-3 text-white font-mono focus:border-pink-400 focus:outline-none focus:ring-2 focus:ring-pink-400/25 transition-all"
         />
       </div>
+
+      <StatusDisplay status={status} psnr={psnr} />
 
       {/* Extract Button */}
       <div className="flex justify-center">

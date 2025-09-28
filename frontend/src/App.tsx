@@ -4,59 +4,9 @@ import { useState } from "react"
 import Header from "./components/Header"
 import EmbedPanel from "./components/EmbedPanel"
 import ExtractPanel from "./components/ExtractPanel"
-import StatusDisplay from "./components/StatusDisplay"
-import type { AppStatus, EmbedResult, ExtractResult, AudioCapacity } from "./types"
 
 function App() {
   const [activeTab, setActiveTab] = useState<"embed" | "extract">("embed")
-  const [status, setStatus] = useState<AppStatus>({
-    isLoading: false,
-    message: "CYBERSTEG TERMINAL READY - SELECT OPERATION MODE",
-    type: "info",
-  })
-  const [capacity, setCapacity] = useState<AudioCapacity | undefined>()
-  const [psnr, setPsnr] = useState<number | undefined>()
-
-  const handleStatusUpdate = (newStatus: AppStatus) => {
-    setStatus(newStatus)
-  }
-
-  const handleCapacityUpdate = (newCapacity: AudioCapacity) => {
-    setCapacity(newCapacity)
-  }
-
-  const handleEmbedComplete = (result: EmbedResult) => {
-    if (result.success && result.psnr) {
-      setPsnr(result.psnr)
-      setStatus({
-        isLoading: false,
-        message: `MESSAGE EMBEDDED SUCCESSFULLY! PSNR: ${result.psnr.toFixed(2)} dB`,
-        type: "success",
-      })
-    } else {
-      setStatus({
-        isLoading: false,
-        message: result.message || "EMBEDDING OPERATION FAILED",
-        type: "error",
-      })
-    }
-  }
-
-  const handleExtractComplete = (result: ExtractResult) => {
-    if (result.success) {
-      setStatus({
-        isLoading: false,
-        message: "MESSAGE EXTRACTION COMPLETED SUCCESSFULLY",
-        type: "success",
-      })
-    } else {
-      setStatus({
-        isLoading: false,
-        message: result.error || "EXTRACTION OPERATION FAILED",
-        type: "error",
-      })
-    }
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-black text-white relative overflow-hidden">
@@ -75,8 +25,6 @@ function App() {
 
       <div className="relative z-20 container mx-auto px-4 py-8">
         <Header />
-
-        <StatusDisplay status={status} capacity={capacity} psnr={psnr} />
 
         {/* Tab Navigation with enhanced styling */}
         <div className="flex justify-center mb-8">
@@ -113,13 +61,9 @@ function App() {
         {/* Main Content */}
         <div className="max-w-6xl mx-auto">
           {activeTab === "embed" ? (
-            <EmbedPanel
-              onStatusUpdate={handleStatusUpdate}
-              onCapacityUpdate={handleCapacityUpdate}
-              onEmbedComplete={handleEmbedComplete}
-            />
+            <EmbedPanel />
           ) : (
-            <ExtractPanel onStatusUpdate={handleStatusUpdate} onExtractComplete={handleExtractComplete} />
+            <ExtractPanel />
           )}
         </div>
 
