@@ -3,8 +3,10 @@
 import type React from "react"
 import { useRef, useState, useEffect } from "react"
 import type { AudioPlayerProps } from "../types"
+import Button from "./Button"
+import { ArrowDown } from "lucide-react";
 
-const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioUrl, label, className = "" }) => {
+const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioUrl, label, className = "", onClick }) => {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -147,6 +149,16 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioUrl, label, className = 
           ))}
         </div>
       </div>
+
+      {label === "STEGO AUDIO" && (
+        <Button
+          variant="secondary"
+          className="mt-3 w-10 h-10 rounded-full bg-green-500 hover:bg-green-600 text-white p-0 flex items-center justify-center"
+          onClick={onClick}
+        >
+          <ArrowDown size={16} />
+        </Button>
+      )}
     </div>
   )
 }

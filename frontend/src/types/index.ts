@@ -65,6 +65,7 @@ export interface AudioPlayerProps {
   audioUrl?: string
   label?: string
   className?: string
+  onClick?: () => void
 }
 
 export interface StatusDisplayProps {

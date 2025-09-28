@@ -75,39 +75,82 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
     })
 
     try {
-      // Simulate embedding process
-      await new Promise((resolve) => setTimeout(resolve, 3000))
+      const formData = new FormData()
+      formData.append("audio", coverAudio.file)
+      formData.append("secret", secretFile.file)
+      formData.append("lsb", options.nLSB.toString())
+      formData.append("use_encryption", options.encrypt.toString())
+      formData.append("use_random_start", options.randomStart.toString())
+      if (options.stegKey) {
+        formData.append("stego_key", options.stegKey)
+      }
+      formData.append("output_filename", `stego_${coverAudio.name}`)
 
-      // Simulate creating stego audio (in real app, this would be the actual embedded audio)
+      const response = await fetch(`http://localhost:${port}/api/v1/embed`, {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.message || "Failed to embed file")
+      }
+
+      const contentDisposition = response.headers.get("Content-Disposition")
+      const filenameMatch = contentDisposition?.match(/filename="([^"]+)"/)
+      const filename = filenameMatch ? filenameMatch[1] : `stego_${coverAudio.name}`
+
+      const blob = await response.blob()
       const stegoFile: UploadedFile = {
-        file: coverAudio.file, // In real app, this would be the processed file
-        name: `stego_${coverAudio.name}`,
-        size: coverAudio.size,
-        url: coverAudio.url, // In real app, this would be the new processed audio URL
+        file: new File([blob], filename, { type: "audio/mpeg" }),
+        name: filename,
+        size: blob.size,
+        url: URL.createObjectURL(blob),
       }
 
       setStegoAudio(stegoFile)
 
-      // Simulate PSNR calculation
-      const psnr = 35 + Math.random() * 10 // Random PSNR between 35-45 dB
-
       const result: EmbedResult = {
         success: true,
-        psnr,
+        psnr: parseFloat(response.headers.get("X-PSNR-Value") || "0"),
         stegoAudioUrl: stegoFile.url,
         message: "File successfully embedded",
+        secretSize: parseInt(response.headers.get("X-Secret-Size") || "0"),
+        processingTime: parseInt(response.headers.get("X-Processing-Time") || "0"),
+        embeddingMethod: response.headers.get("X-Embedding-Method") || "LSB",
       }
 
       onEmbedComplete(result)
+      onStatusUpdate({
+        isLoading: false,
+        message: "Embedding completed successfully",
+        type: "success",
+      })
     } catch (error) {
       const result: EmbedResult = {
         success: false,
-        message: "Failed to embed file",
+        message: error instanceof Error ? error.message : "Failed to embed file",
       }
       onEmbedComplete(result)
+      onStatusUpdate({
+        isLoading: false,
+        message: error instanceof Error ? error.message : "Failed to embed file",
+        type: "error",
+      })
     } finally {
       setIsEmbedding(false)
     }
+  }
+
+  const handleDownload = () => {
+    if (!stegoAudio) return
+
+    const link = document.createElement("a")
+    link.href = stegoAudio.url
+    link.download = stegoAudio.name
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
   }
 
   const isEmbedReady = coverAudio && secretFile && (options.encrypt || options.randomStart ? options.stegKey.trim() : true)
@@ -237,7 +280,11 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
       {coverAudio && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <AudioPlayer audioUrl={coverAudio.url} label="ORIGINAL AUDIO" />
-          {stegoAudio && <AudioPlayer audioUrl={stegoAudio.url} label="STEGO AUDIO" />}
+          {stegoAudio && (
+            <div>
+              <AudioPlayer audioUrl={stegoAudio.url} label="STEGO AUDIO" onClick={handleDownload} />
+            </div>
+          )}
         </div>
       )}
     </div>
