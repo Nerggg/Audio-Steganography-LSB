@@ -60,15 +60,6 @@ const StatusDisplay: React.FC<StatusDisplayProps> = ({ status, capacity, psnr })
             <div className="text-white text-lg font-bold">{psnr.toFixed(2)} dB</div>
           </div>
         )}
-
-        {/* System info */}
-        <div className="border border-cyan-400/50 rounded-lg p-3 bg-cyan-900/20 backdrop-blur-sm">
-          <div className="text-cyan-400 font-mono text-sm mb-1">SYSTEM</div>
-          <div className="text-white text-xs">
-            <div>LSB READY</div>
-            <div>AES-256 ENABLED</div>
-          </div>
-        </div>
       </div>
     </div>
   )

@@ -127,16 +127,9 @@ function App() {
         <footer className="mt-16 text-center">
           <div className="border-t border-cyan-400/20 pt-8">
             <div className="flex justify-center items-center gap-4 text-sm text-gray-400 font-mono">
-              <span className="flex items-center gap-1">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                SYSTEM ONLINE
-              </span>
+              <span>13522141</span>
               <span>|</span>
-              <span>ENCRYPTION: AES-256</span>
-              <span>|</span>
-              <span>LSB: 1-4 BITS</span>
-              <span>|</span>
-              <span className="hologram">CYBERSTEG v2.1.84</span>
+              <span>13522147</span>
             </div>
           </div>
         </footer>
