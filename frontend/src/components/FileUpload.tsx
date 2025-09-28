@@ -49,7 +49,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, accept = "audio/*
     setIsDragOver(false)
 
     const file = e.dataTransfer.files[0]
-    if (label == "COVER AUDIO FILE" && file && file.type.startsWith("audio/")) {
+    if ((label == "COVER AUDIO FILE" || label == "STEGANOGRAPHIC AUDIO FILE") && file && file.type.startsWith("audio/")) {
       handleFileSelect(file)
     } else if (label == "SECRET FILE") {
       handleFileSelect(file)

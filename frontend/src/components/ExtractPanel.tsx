@@ -14,24 +14,28 @@ interface ExtractPanelProps {
 
 const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractComplete }) => {
   const [stegoAudio, setStegoAudio] = useState<UploadedFile | undefined>()
-  const [extractedMessage, setExtractedMessage] = useState("")
   const [options, setOptions] = useState<ExtractOptions>({
     stegKey: "",
   })
   const [isExtracting, setIsExtracting] = useState(false)
-  const [showMessage, setShowMessage] = useState(false)
+  const [extractedFileInfo, setExtractedFileInfo] = useState<{
+    filename: string
+    size: number
+    blobUrl: string
+  } | null>(null)
+
+  const API_URL = "http://localhost:8080"
 
   const handleStegoAudioSelect = (file: UploadedFile) => {
     setStegoAudio(file)
-    setExtractedMessage("")
-    setShowMessage(false)
+    setExtractedFileInfo(null)
   }
 
   const handleExtract = async () => {
     if (!stegoAudio) return
 
     setIsExtracting(true)
-    setShowMessage(false)
+    setExtractedFileInfo(null)
     onStatusUpdate({
       isLoading: true,
       message: "Analyzing steganographic audio...",
@@ -39,36 +43,45 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
     })
 
     try {
-      // Simulate extraction process
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      const formData = new FormData()
+      formData.append("stego_audio", stegoAudio.file)
+      if (options.stegKey) {
+        formData.append("stego_key", options.stegKey)
+      }
 
-      // Simulate message extraction (in real app, this would be actual extraction)
-      const messages = [
-        "The secret meeting is at midnight in the old warehouse.",
-        "Operation Blue Moon is a go. Proceed with phase 2.",
-        "The password is: CyberSteg2024!",
-        "Hidden data successfully extracted from audio stream.",
-        "Confidential: Project X files are in the secure vault.",
-      ]
+      const response = await fetch(`${API_URL}/api/v1/extract`, {
+        method: "POST",
+        body: formData,
+      })
 
-      const randomMessage = messages[Math.floor(Math.random() * messages.length)]
-      setExtractedMessage(randomMessage)
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.message || "Extraction failed")
+      }
 
-      // Simulate typing effect
-      setTimeout(() => {
-        setShowMessage(true)
-      }, 500)
+      const contentDisposition = response.headers.get("Content-Disposition")
+      const filenameMatch = contentDisposition?.match(/filename="(.+)"/)
+      const filename = filenameMatch ? filenameMatch[1] : "extracted_file"
+      const secretSize = parseInt(response.headers.get("X-Secret-Size") || "0")
+
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+
+      setExtractedFileInfo({
+        filename,
+        size: secretSize,
+        blobUrl,
+      })
 
       const result: ExtractResult = {
         success: true,
-        message: randomMessage,
+        message: "File extracted successfully",
       }
-
       onExtractComplete(result)
     } catch (error) {
       const result: ExtractResult = {
         success: false,
-        error: "Failed to extract message from audio",
+        error: error instanceof Error ? error.message : "Failed to extract file",
       }
       onExtractComplete(result)
     } finally {
@@ -94,20 +107,16 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
       <div className="border border-pink-500/50 rounded-lg p-6 bg-pink-900/10 backdrop-blur-sm">
         <div className="text-pink-400 font-mono text-sm mb-4 flex items-center gap-2">
           <span className="w-2 h-2 bg-pink-400 rounded-full animate-pulse"></span>
-          STEGANOGRAPHY KEY (OPTIONAL)
+          SECRET KEY (OPTIONAL)
         </div>
 
         <input
           type="password"
           value={options.stegKey}
           onChange={(e) => setOptions({ ...options, stegKey: e.target.value })}
-          placeholder="Enter decryption key if message is encrypted..."
+          placeholder="Enter decryption key if message is encrypted or using random start position..."
           className="w-full bg-black/50 border border-pink-400/30 rounded-lg p-3 text-white font-mono focus:border-pink-400 focus:outline-none focus:ring-2 focus:ring-pink-400/25 transition-all"
         />
-
-        <p className="text-gray-400 text-sm mt-2 font-mono">
-          Leave empty if the message was not encrypted or if you want to attempt extraction without a key.
-        </p>
       </div>
 
       {/* Extract Button */}
@@ -122,72 +131,46 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
         </Button>
       </div>
 
-      {/* Extracted Message Display */}
-      {extractedMessage && (
+      {/* Extracted File Info Display */}
+      {extractedFileInfo && (
         <div className="border border-green-400/50 rounded-lg p-6 bg-green-900/10 backdrop-blur-sm">
           <div className="text-green-400 font-mono text-sm mb-4 flex items-center gap-2">
             <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-            EXTRACTED MESSAGE
+            EXTRACTED FILE
           </div>
 
           <div className="bg-black/70 border border-green-400/30 rounded-lg p-4 min-h-[120px] relative overflow-hidden">
-            {/* Terminal-style header */}
             <div className="flex items-center gap-2 mb-3 pb-2 border-b border-green-400/20">
               <div className="w-3 h-3 rounded-full bg-red-500"></div>
               <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
               <div className="w-3 h-3 rounded-full bg-green-500"></div>
-              <span className="text-green-400 font-mono text-xs ml-2">DECRYPTED_MESSAGE.TXT</span>
+              <span className="text-green-400 font-mono text-xs ml-2">{extractedFileInfo.filename}</span>
             </div>
 
-            {/* Message content with typing effect */}
             <div className="font-mono text-green-400 leading-relaxed">
-              {showMessage ? (
-                <div className="terminal-text">{extractedMessage}</div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-ping"></div>
-                  <span>Decrypting message...</span>
-                </div>
-              )}
+              <p>File Name: {extractedFileInfo.filename}</p>
+              <p>Size: {(extractedFileInfo.size / 1024).toFixed(2)} KB</p>
             </div>
 
-            {/* Cursor blink */}
-            {showMessage && <span className="inline-block w-2 h-5 bg-green-400 ml-1 animate-pulse"></span>}
-
-            {/* Scanning lines effect */}
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute w-full h-px bg-gradient-to-r from-transparent via-green-400/30 to-transparent animate-pulse"></div>
             </div>
           </div>
 
-          {/* Message actions */}
           <div className="flex justify-between items-center mt-4">
             <div className="flex items-center gap-2 text-sm">
               <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-green-400 font-mono">MESSAGE DECODED</span>
+              <span className="text-green-400 font-mono">FILE EXTRACTED</span>
             </div>
 
             <div className="flex gap-2">
-              <button
-                onClick={() => navigator.clipboard.writeText(extractedMessage)}
+              <a
+                href={extractedFileInfo.blobUrl}
+                download={extractedFileInfo.filename}
                 className="px-3 py-1 border border-green-400/50 rounded text-green-400 text-sm font-mono hover:bg-green-400/10 transition-colors"
               >
-                COPY
-              </button>
-              <button
-                onClick={() => {
-                  const blob = new Blob([extractedMessage], { type: "text/plain" })
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement("a")
-                  a.href = url
-                  a.download = "extracted_message.txt"
-                  a.click()
-                  URL.revokeObjectURL(url)
-                }}
-                className="px-3 py-1 border border-green-400/50 rounded text-green-400 text-sm font-mono hover:bg-green-400/10 transition-colors"
-              >
-                SAVE
-              </button>
+                DOWNLOAD
+              </a>
             </div>
           </div>
         </div>
@@ -199,29 +182,6 @@ const ExtractPanel: React.FC<ExtractPanelProps> = ({ onStatusUpdate, onExtractCo
           <AudioPlayer audioUrl={stegoAudio.url} label="STEGANOGRAPHIC AUDIO" />
         </div>
       )}
-
-      {/* Extraction Info Panel */}
-      <div className="border border-cyan-400/50 rounded-lg p-6 bg-cyan-900/10 backdrop-blur-sm">
-        <div className="text-cyan-400 font-mono text-sm mb-4 flex items-center gap-2">
-          <span className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse"></span>
-          EXTRACTION PARAMETERS
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-          <div>
-            <span className="text-cyan-400 font-mono">METHOD:</span>
-            <div className="text-white">LSB Analysis</div>
-          </div>
-          <div>
-            <span className="text-cyan-400 font-mono">ENCRYPTION:</span>
-            <div className="text-white">Auto-Detect</div>
-          </div>
-          <div>
-            <span className="text-cyan-400 font-mono">STATUS:</span>
-            <div className="text-white">{isExtracting ? "Processing..." : extractedMessage ? "Complete" : "Ready"}</div>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

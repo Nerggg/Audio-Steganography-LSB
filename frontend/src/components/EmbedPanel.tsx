@@ -25,9 +25,7 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
   })
   const [isEmbedding, setIsEmbedding] = useState(false)
 
-  // const port = process.env.NEXT_PUBLIC_API_PORT || "8080"
-  const port = "8080"
-  console.log(port)
+  const API_URL = "http://localhost:8080"
 
   // Calculate capacity when cover audio is loaded
   useEffect(() => {
@@ -86,7 +84,7 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
       }
       formData.append("output_filename", `stego_${coverAudio.name}`)
 
-      const response = await fetch(`http://localhost:${port}/api/v1/embed`, {
+      const response = await fetch(`${API_URL}/api/v1/embed`, {
         method: "POST",
         body: formData,
       })
