@@ -182,10 +182,10 @@ func (h *Handlers) CalculateCapacityHandler(c *gin.Context) {
 
 // EmbedHandler handles the message embedding request
 // @Summary Embed Secret Data in Audio
-// @Description Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format with embedded data and quality metrics.
+// @Description Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format (if ffmpeg available) or WAV format (fallback) with embedded data and quality metrics.
 // @Tags Steganography
 // @Accept multipart/form-data
-// @Produce audio/mpeg
+// @Produce audio/mpeg,audio/wav
 // @Param audio formData file true "MP3 audio file for embedding (max 100MB)"
 // @Param secret formData file true "Secret file to embed (max 50MB)"
 // @Param lsb formData int true "Number of LSB bits to use for embedding (1-4)" Enums(1, 2, 3, 4)
@@ -339,13 +339,24 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 
 	processingTime := int(time.Since(startTime).Milliseconds())
 	outputFilename := c.PostForm("output_filename")
+	// Detect actual format by header
+	isMP3 := len(stegoAudio) >= 3 && (string(stegoAudio[:3]) == "ID3" || (stegoAudio[0] == 0xFF && (stegoAudio[1]&0xE0) == 0xE0))
+
 	if outputFilename == "" {
-		// Default extension to WAV since we're encoding to WAV for steganography preservation
-		outputFilename = "stego_audio.wav"
+		if isMP3 {
+			outputFilename = "stego_audio.mp3"
+		} else {
+			outputFilename = "stego_audio.wav"
+		}
 	} else {
-		// Ensure the output has .wav extension
-		if !strings.HasSuffix(strings.ToLower(outputFilename), ".wav") {
-			outputFilename = strings.TrimSuffix(outputFilename, filepath.Ext(outputFilename)) + ".wav"
+		if isMP3 {
+			if !strings.HasSuffix(strings.ToLower(outputFilename), ".mp3") {
+				outputFilename = strings.TrimSuffix(outputFilename, filepath.Ext(outputFilename)) + ".mp3"
+			}
+		} else {
+			if !strings.HasSuffix(strings.ToLower(outputFilename), ".wav") {
+				outputFilename = strings.TrimSuffix(outputFilename, filepath.Ext(outputFilename)) + ".wav"
+			}
 		}
 	}
 
@@ -355,15 +366,117 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	c.Header("X-Embedding-Method", fmt.Sprintf("%d-LSB", lsb))
 	c.Header("X-Secret-Size", strconv.Itoa(len(secretData)))
 	c.Header("X-Processing-Time", strconv.Itoa(processingTime))
-	c.Header("X-Output-Format", "WAV")
+	if isMP3 {
+		c.Header("X-Output-Format", "MP3")
+	} else {
+		c.Header("X-Output-Format", "WAV")
+	}
 
-	// Return WAV audio file (necessary for LSB steganography preservation)
-	c.Data(http.StatusOK, "audio/wav", stegoAudio)
+	// Return audio file
+	if isMP3 {
+		c.Data(http.StatusOK, "audio/mpeg", stegoAudio)
+	} else {
+		c.Data(http.StatusOK, "audio/wav", stegoAudio)
+	}
 }
 
 // ExtractHandler handles the data extraction request
-// @Summary Extract Secret Data from Audio
-// @Description Extracts hidden secret data from a stego audio file (MP3 or WAV) that was created using LSB steganography. Returns the original secret file.
+// @Summary Extract Secret Data from Audio (Simplified)
+// @Description Extracts hidden secret data from a stego audio file (MP3 or WAV) with auto-detection of embedding parameters. Only requires the stego file and optional key.
+// @Tags Steganography
+// @Accept multipart/form-data
+// @Produce application/octet-stream
+// @Param stego_audio formData file true "Stego audio file (MP3 or WAV) containing embedded data (max 100MB)"
+// @Param stego_key formData string false "Steganography key (required only if file was encrypted during embedding)"
+// @Param output_filename formData string false "Desired filename for the extracted secret file (optional - will use original filename if not provided)"
+// @Success 200 {file} file "Successfully extracted secret data"
+// @Header 200 {string} Content-Disposition "Original filename of the extracted secret"
+// @Header 200 {string} X-Extraction-Method "Auto-detected LSB method used for extraction"
+// @Header 200 {int} X-Secret-Size "Size of extracted secret in bytes"
+// @Header 200 {int} X-Processing-Time "Time taken to process the request in milliseconds"
+// @Failure 400 {object} models.ErrorResponse "Bad Request: Invalid file format"
+// @Failure 413 {object} models.ErrorResponse "File too large"
+// @Failure 500 {object} models.ErrorResponse "Internal Server Error: Failed to extract or auto-detect parameters"
+// @Router /extract [post]
+func (h *Handlers) ExtractHandler(c *gin.Context) {
+	startTime := time.Now()
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+
+	log.Printf("[INFO] [%s] ExtractHandler: Starting simplified extraction request from %s", requestID, c.ClientIP())
+
+	// Get stego audio file
+	stegoHeader, err := c.FormFile("stego_audio")
+	if err != nil {
+		log.Printf("[ERROR] [%s] ExtractHandler: No stego audio file provided: %v", requestID, err)
+		sendError(c, http.StatusBadRequest, "MISSING_FILE", "Stego audio file not provided")
+		return
+	}
+
+	log.Printf("[DEBUG] [%s] ExtractHandler: Stego file '%s' (size: %d bytes)", requestID, stegoHeader.Filename, stegoHeader.Size)
+
+	// Validate file extension (support both MP3 and WAV)
+	ext := strings.ToLower(filepath.Ext(stegoHeader.Filename))
+	if ext != ".mp3" && ext != ".wav" {
+		log.Printf("[ERROR] [%s] ExtractHandler: Invalid file format '%s', expected MP3 or WAV", requestID, ext)
+		sendError(c, http.StatusBadRequest, "INVALID_FORMAT", "File must be in MP3 or WAV format")
+		return
+	}
+
+	// Check file size
+	if stegoHeader.Size > 100*1024*1024 {
+		sendError(c, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "File size exceeds maximum limit of 100MB")
+		return
+	}
+
+	// Parse optional parameters
+	stegoKey := c.PostForm("stego_key")
+	outputFilename := c.PostForm("output_filename")
+
+	log.Printf("[DEBUG] [%s] ExtractHandler: Parameters - stego_key_provided=%t, output_filename='%s'",
+		requestID, stegoKey != "", outputFilename)
+
+	// Read stego audio file
+	stegoFile, err := stegoHeader.Open()
+	if err != nil {
+		sendError(c, http.StatusInternalServerError, "PROCESSING_ERROR", "Failed to open stego audio file")
+		return
+	}
+	defer stegoFile.Close()
+
+	stegoData, err := io.ReadAll(stegoFile)
+	if err != nil {
+		sendError(c, http.StatusInternalServerError, "PROCESSING_ERROR", "Failed to read stego audio file")
+		return
+	}
+
+	// Perform auto-detection extraction
+	secretData, filename, err := h.steganographyService.ExtractMessageAutoDetect(stegoData, stegoKey, outputFilename)
+	if err != nil {
+		log.Printf("[ERROR] [%s] ExtractHandler: Auto-detection extraction failed: %v", requestID, err)
+		sendError(c, http.StatusInternalServerError, "EXTRACTION_ERROR", "Failed to extract data: "+err.Error())
+		return
+	}
+
+	processingTime := int(time.Since(startTime).Milliseconds())
+
+	// Set response headers
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	c.Header("X-Extraction-Method", "Auto-detected LSB")
+	c.Header("X-Secret-Size", strconv.Itoa(len(secretData)))
+	c.Header("X-Processing-Time", strconv.Itoa(processingTime))
+
+	log.Printf("[INFO] [%s] ExtractHandler: Extraction completed successfully (extracted_size: %d bytes, filename: '%s', duration: %dms)",
+		requestID, len(secretData), filename, processingTime)
+
+	c.Data(http.StatusOK, "application/octet-stream", secretData)
+}
+
+// ExtractManualHandler handles manual extraction with explicit parameters (legacy)
+// @Summary Extract Secret Data from Audio (Manual Parameters)
+// @Description Extracts hidden secret data from a stego audio file with manually specified parameters. For advanced users who know the exact embedding settings.
 // @Tags Steganography
 // @Accept multipart/form-data
 // @Produce application/octet-stream
@@ -371,19 +484,25 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 // @Param lsb formData int true "Number of LSB bits used during embedding (1-4)" Enums(1, 2, 3, 4)
 // @Param use_encryption formData string false "Whether the embedded data was encrypted using Vigenère cipher" Enums(true, false)
 // @Param use_random_start formData string false "Whether random starting position was used during embedding" Enums(true, false)
-// @Param stego_key formData string false "Steganography key used for decryption and random position generation (required if encryption/random start was used, max 25 characters)"
+// @Param stego_key formData string false "Steganography key used for decryption and random position generation"
 // @Param output_filename formData string false "Desired filename for the extracted secret file"
 // @Success 200 {file} file "Successfully extracted secret data"
 // @Header 200 {string} Content-Disposition "Original filename of the extracted secret"
 // @Header 200 {string} X-Extraction-Method "LSB method used for extraction"
 // @Header 200 {int} X-Secret-Size "Size of extracted secret in bytes"
 // @Header 200 {int} X-Processing-Time "Time taken to process the request in milliseconds"
-// @Failure 400 {object} models.ErrorResponse "Bad Request: Invalid file or extraction parameters"
+// @Failure 400 {object} models.ErrorResponse "Bad Request: Invalid parameters or file"
 // @Failure 413 {object} models.ErrorResponse "File too large"
 // @Failure 500 {object} models.ErrorResponse "Internal Server Error"
-// @Router /extract [post]
-func (h *Handlers) ExtractHandler(c *gin.Context) {
+// @Router /extract-manual [post]
+func (h *Handlers) ExtractManualHandler(c *gin.Context) {
 	startTime := time.Now()
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+
+	log.Printf("[INFO] [%s] ExtractManualHandler: Starting manual extraction request from %s", requestID, c.ClientIP())
 
 	// Get stego audio file
 	stegoHeader, err := c.FormFile("stego_audio")
@@ -438,7 +557,7 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 		return
 	}
 
-	// Create extraction request
+	// Create extraction request (legacy method)
 	extractReq := &models.ExtractRequest{
 		StegoAudio:     stegoData,
 		NLsb:           lsb,
@@ -448,7 +567,7 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 		OutputFilename: outputFilename,
 	}
 
-	// Perform extraction
+	// Perform extraction using legacy method
 	secretData, filename, err := h.steganographyService.ExtractMessage(extractReq, stegoData)
 	if err != nil {
 		sendError(c, http.StatusInternalServerError, "EXTRACTION_ERROR", "Failed to extract data: "+err.Error())

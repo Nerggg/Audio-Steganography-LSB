@@ -113,8 +113,8 @@ paths:
       consumes:
       - multipart/form-data
       description: Embeds a secret file into an MP3 audio file using LSB steganography.
-        Returns the stego audio file in MP3 format with embedded data and quality
-        metrics.
+        Returns the stego audio file in MP3 format (if ffmpeg available) or WAV format
+        (fallback) with embedded data and quality metrics.
       parameters:
       - description: MP3 audio file for embedding (max 100MB)
         in: formData
@@ -161,6 +161,7 @@ paths:
         type: string
       produces:
       - audio/mpeg
+      - audio/wav
       responses:
         "200":
           description: Successfully embedded secret data
@@ -203,7 +204,65 @@ paths:
       consumes:
       - multipart/form-data
       description: Extracts hidden secret data from a stego audio file (MP3 or WAV)
-        that was created using LSB steganography. Returns the original secret file.
+        with auto-detection of embedding parameters. Only requires the stego file
+        and optional key.
+      parameters:
+      - description: Stego audio file (MP3 or WAV) containing embedded data (max 100MB)
+        in: formData
+        name: stego_audio
+        required: true
+        type: file
+      - description: Steganography key (required only if file was encrypted during
+          embedding)
+        in: formData
+        name: stego_key
+        type: string
+      - description: Desired filename for the extracted secret file (optional - will
+          use original filename if not provided)
+        in: formData
+        name: output_filename
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: Successfully extracted secret data
+          headers:
+            Content-Disposition:
+              description: Original filename of the extracted secret
+              type: string
+            X-Extraction-Method:
+              description: Auto-detected LSB method used for extraction
+              type: string
+            X-Processing-Time:
+              description: Time taken to process the request in milliseconds
+              type: int
+            X-Secret-Size:
+              description: Size of extracted secret in bytes
+              type: int
+          schema:
+            type: file
+        "400":
+          description: 'Bad Request: Invalid file format'
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "413":
+          description: File too large
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: 'Internal Server Error: Failed to extract or auto-detect parameters'
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Extract Secret Data from Audio (Simplified)
+      tags:
+      - Steganography
+  /extract-manual:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Extracts hidden secret data from a stego audio file with manually
+        specified parameters. For advanced users who know the exact embedding settings.
       parameters:
       - description: Stego audio file (MP3 or WAV) containing embedded data (max 100MB)
         in: formData
@@ -235,7 +294,6 @@ paths:
         name: use_random_start
         type: string
       - description: Steganography key used for decryption and random position generation
-          (required if encryption/random start was used, max 25 characters)
         in: formData
         name: stego_key
         type: string
@@ -264,7 +322,7 @@ paths:
           schema:
             type: file
         "400":
-          description: 'Bad Request: Invalid file or extraction parameters'
+          description: 'Bad Request: Invalid parameters or file'
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "413":
@@ -275,7 +333,7 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/models.ErrorResponse'
-      summary: Extract Secret Data from Audio
+      summary: Extract Secret Data from Audio (Manual Parameters)
       tags:
       - Steganography
   /health:

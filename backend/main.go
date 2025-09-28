@@ -76,6 +76,7 @@ func main() {
 		v1.POST("/capacity", h.CalculateCapacityHandler)
 		v1.POST("/embed", h.EmbedHandler)
 		v1.POST("/extract", h.ExtractHandler)
+		v1.POST("/extract-manual", h.ExtractManualHandler)
 	}
 
 	// Get port from environment or use default

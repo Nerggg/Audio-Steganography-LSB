@@ -192,6 +192,50 @@ func parseMetadata(metadata []byte) (filename string, fileSize int, useEncryptio
 	return filename, fileSize, useEncryption, useRandomStart, nil
 }
 
+// parseMetadataWithNLsb parses metadata and returns nLSB value as well
+func parseMetadataWithNLsb(metadata []byte) (filename string, fileSize int, useEncryption, useRandomStart bool, nLsb int, err error) {
+	if len(metadata) < 38 {
+		return "", 0, false, false, 0, fmt.Errorf("metadata too short: expected at least 38 bytes, got %d", len(metadata))
+	}
+
+	// Extract filename (first 32 bytes, null-terminated)
+	filenameBytes := metadata[:32]
+	// Find the first null byte to get the actual filename
+	nullIndex := -1
+	for i, b := range filenameBytes {
+		if b == 0 {
+			nullIndex = i
+			break
+		}
+	}
+
+	if nullIndex >= 0 {
+		filename = string(filenameBytes[:nullIndex])
+	} else {
+		filename = string(filenameBytes)
+	}
+
+	// Clean up filename (remove any remaining null characters and trim)
+	filename = strings.Trim(filename, "\x00")
+	filename = strings.TrimSpace(filename)
+
+	// Extract file size (bytes 32-35, big-endian)
+	fileSize = int(binary.BigEndian.Uint32(metadata[32:36]))
+
+	// Extract flags (byte 36)
+	flags := metadata[36]
+	useEncryption = (flags & 0x01) != 0
+	useRandomStart = (flags & 0x02) != 0
+
+	// Extract n-LSB value (byte 37)
+	nLsb = int(metadata[37])
+
+	log.Printf("[DEBUG] parseMetadataWithNLsb: filename='%s', file_size=%d, encryption=%t, random_start=%t, nLSB=%d",
+		filename, fileSize, useEncryption, useRandomStart, nLsb)
+
+	return filename, fileSize, useEncryption, useRandomStart, nLsb, nil
+}
+
 // parseWAVHeader parses a WAV file header and returns the data chunk offset and size
 func parseWAVHeader(wavData []byte) (dataOffset int, dataSize uint32, err error) {
 	if len(wavData) < 44 {

@@ -63,12 +63,13 @@
         },
         "/embed": {
             "post": {
-                "description": "Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format with embedded data and quality metrics.",
+                "description": "Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format (if ffmpeg available) or WAV format (fallback) with embedded data and quality metrics.",
                 "consumes": [
                     "multipart/form-data"
                 ],
                 "produces": [
-                    "audio/mpeg"
+                    "audio/mpeg",
+                    "audio/wav"
                 ],
                 "tags": [
                     "Steganography"
@@ -187,7 +188,7 @@
         },
         "/extract": {
             "post": {
-                "description": "Extracts hidden secret data from a stego audio file (MP3 or WAV) that was created using LSB steganography. Returns the original secret file.",
+                "description": "Extracts hidden secret data from a stego audio file (MP3 or WAV) with auto-detection of embedding parameters. Only requires the stego file and optional key.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -197,7 +198,87 @@
                 "tags": [
                     "Steganography"
                 ],
-                "summary": "Extract Secret Data from Audio",
+                "summary": "Extract Secret Data from Audio (Simplified)",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Stego audio file (MP3 or WAV) containing embedded data (max 100MB)",
+                        "name": "stego_audio",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Steganography key (required only if file was encrypted during embedding)",
+                        "name": "stego_key",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Desired filename for the extracted secret file (optional - will use original filename if not provided)",
+                        "name": "output_filename",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successfully extracted secret data",
+                        "schema": {
+                            "type": "file"
+                        },
+                        "headers": {
+                            "Content-Disposition": {
+                                "type": "string",
+                                "description": "Original filename of the extracted secret"
+                            },
+                            "X-Extraction-Method": {
+                                "type": "string",
+                                "description": "Auto-detected LSB method used for extraction"
+                            },
+                            "X-Processing-Time": {
+                                "type": "int",
+                                "description": "Time taken to process the request in milliseconds"
+                            },
+                            "X-Secret-Size": {
+                                "type": "int",
+                                "description": "Size of extracted secret in bytes"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request: Invalid file format",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "File too large",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error: Failed to extract or auto-detect parameters",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/extract-manual": {
+            "post": {
+                "description": "Extracts hidden secret data from a stego audio file with manually specified parameters. For advanced users who know the exact embedding settings.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "Steganography"
+                ],
+                "summary": "Extract Secret Data from Audio (Manual Parameters)",
                 "parameters": [
                     {
                         "type": "file",
@@ -241,7 +322,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Steganography key used for decryption and random position generation (required if encryption/random start was used, max 25 characters)",
+                        "description": "Steganography key used for decryption and random position generation",
                         "name": "stego_key",
                         "in": "formData"
                     },
@@ -278,7 +359,7 @@
                         }
                     },
                     "400": {
-                        "description": "Bad Request: Invalid file or extraction parameters",
+                        "description": "Bad Request: Invalid parameters or file",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }

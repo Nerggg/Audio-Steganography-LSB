@@ -191,20 +191,20 @@ func (s *steganographyService) EmbedMessage(req *models.EmbedRequest, secretData
 	psnr := audioSvc.CalculatePSNR(originalPCM, pcmData)
 	log.Printf("[INFO] EmbedMessage: PSNR calculated: %.2f dB", psnr)
 
-	// Encode modified PCM back to WAV format (preserves LSB steganography)
-	log.Printf("[DEBUG] EmbedMessage: Encoding to WAV format...")
+	// Encode modified PCM to MP3 format using ID3 PRIV tag (preserves LSB steganography)
+	log.Printf("[DEBUG] EmbedMessage: Encoding to MP3 format with ID3 PRIV steganography...")
 	encoder := NewAudioEncoder()
-	wavData, err := encoder.EncodeToWAV(pcmData, decoder.SampleRate())
+	mp3Data, err := encoder.EncodeToMP3(pcmData, decoder.SampleRate())
 	if err != nil {
-		log.Printf("[ERROR] EmbedMessage: Failed to encode to WAV: %v", err)
-		return nil, 0, fmt.Errorf("failed to encode audio to WAV: %v", err)
+		log.Printf("[ERROR] EmbedMessage: Failed to encode to MP3: %v", err)
+		return nil, 0, fmt.Errorf("failed to encode audio to MP3: %v", err)
 	}
 
 	duration := time.Since(start)
 	log.Printf("[INFO] EmbedMessage: Embed operation completed successfully (output_size: %d bytes, psnr: %.2f dB, duration: %v)",
-		len(wavData), psnr, duration)
+		len(mp3Data), psnr, duration)
 
-	return wavData, psnr, nil
+	return mp3Data, psnr, nil
 }
 
 // ExtractMessage extracts a secret message from audio data
@@ -216,15 +216,17 @@ func (s *steganographyService) ExtractMessage(req *models.ExtractRequest, audioD
 	var pcmData []byte
 	var err error
 
-	// Try to decode as our custom steganographic MP3 format first
+	// Try to extract from MP3 PRIV payload first (our new method)
 	if len(req.StegoAudio) > 20 && string(req.StegoAudio[:3]) == "ID3" {
-		log.Printf("[DEBUG] ExtractMessage: Detected steganographic MP3 format")
+		log.Printf("[DEBUG] ExtractMessage: Checking ID3 PRIV for embedded PCM")
 		encoder := NewAudioEncoder()
-		pcmData, err = encoder.extractFromSteganographicMP3(req.StegoAudio)
-		if err != nil {
-			log.Printf("[DEBUG] ExtractMessage: Steganographic MP3 extraction failed, trying standard MP3: %v", err)
+		if payload, found, err2 := encoder.ExtractPayloadFromMP3(req.StegoAudio, "stego/lsb-pcm"); err2 == nil && found {
+			pcmData = payload
+			log.Printf("[DEBUG] ExtractMessage: Found embedded PCM via PRIV (size: %d)", len(pcmData))
+		} else if err2 != nil {
+			log.Printf("[WARN] ExtractMessage: Failed to parse ID3 PRIV: %v", err2)
 		} else {
-			log.Printf("[DEBUG] ExtractMessage: Successfully extracted PCM from steganographic MP3 (pcm_size: %d bytes)", len(pcmData))
+			log.Printf("[DEBUG] ExtractMessage: No PRIV payload found, trying legacy extraction")
 		}
 	}
 
@@ -314,6 +316,144 @@ func (s *steganographyService) ExtractMessage(req *models.ExtractRequest, audioD
 		len(secretData), outputFilename, duration)
 
 	return secretData, outputFilename, nil
+}
+
+// ExtractMessageAutoDetect extracts a secret message with auto-detection of parameters
+func (s *steganographyService) ExtractMessageAutoDetect(stegoAudio []byte, stegoKey string, outputFilename string) ([]byte, string, error) {
+	start := time.Now()
+	log.Printf("[DEBUG] ExtractMessageAutoDetect: Starting auto-detection extraction (audio_size: %d bytes)", len(stegoAudio))
+
+	var pcmData []byte
+
+	// Try to extract from MP3 PRIV payload first (our new method)
+	if len(stegoAudio) > 20 && string(stegoAudio[:3]) == "ID3" {
+		log.Printf("[DEBUG] ExtractMessageAutoDetect: Checking ID3 PRIV for embedded PCM")
+		encoder := NewAudioEncoder()
+		if payload, found, err2 := encoder.ExtractPayloadFromMP3(stegoAudio, "stego/lsb-pcm"); err2 == nil && found {
+			pcmData = payload
+			log.Printf("[DEBUG] ExtractMessageAutoDetect: Found embedded PCM via PRIV (size: %d)", len(pcmData))
+		} else if err2 != nil {
+			log.Printf("[WARN] ExtractMessageAutoDetect: Failed to parse ID3 PRIV: %v", err2)
+		} else {
+			log.Printf("[DEBUG] ExtractMessageAutoDetect: No PRIV payload found, trying standard decoding")
+		}
+	}
+
+	// If no PRIV payload found, try standard MP3/WAV decoding
+	if pcmData == nil {
+		audioReader := bytes.NewReader(stegoAudio)
+		decoder, err := mp3.NewDecoder(audioReader)
+		if err == nil {
+			pcmData, err = io.ReadAll(decoder)
+			if err != nil {
+				log.Printf("[ERROR] ExtractMessageAutoDetect: Failed to read MP3 PCM data: %v", err)
+				return nil, "", errors.New("failed to read MP3 PCM data: " + err.Error())
+			}
+			log.Printf("[DEBUG] ExtractMessageAutoDetect: Successfully decoded MP3 to PCM (pcm_size: %d bytes)", len(pcmData))
+		} else {
+			log.Printf("[DEBUG] ExtractMessageAutoDetect: MP3 decoding failed, trying WAV format: %v", err)
+			// Try to handle as WAV format
+			if len(stegoAudio) > 44 && string(stegoAudio[:4]) == "RIFF" && string(stegoAudio[8:12]) == "WAVE" {
+				// Parse WAV header to find data chunk
+				dataOffset, dataSize, parseErr := parseWAVHeader(stegoAudio)
+				if parseErr != nil {
+					log.Printf("[ERROR] ExtractMessageAutoDetect: Failed to parse WAV header: %v", parseErr)
+					return nil, "", fmt.Errorf("failed to parse WAV header: %v", parseErr)
+				}
+
+				if dataOffset+int(dataSize) > len(stegoAudio) {
+					log.Printf("[ERROR] ExtractMessageAutoDetect: Invalid WAV file - data chunk extends beyond file")
+					return nil, "", errors.New("invalid WAV file structure")
+				}
+
+				pcmData = stegoAudio[dataOffset : dataOffset+int(dataSize)]
+				log.Printf("[DEBUG] ExtractMessageAutoDetect: Successfully parsed WAV format (pcm_size: %d bytes, data_offset: %d)", len(pcmData), dataOffset)
+			} else {
+				log.Printf("[ERROR] ExtractMessageAutoDetect: Unable to decode audio format (not MP3, steganographic MP3, or WAV)")
+				return nil, "", errors.New("unsupported audio format: file must be MP3 or WAV")
+			}
+		}
+	}
+
+	totalSamples := len(pcmData) / 2
+
+	// Try different nLSB values (1-4) to auto-detect the correct one
+	metadataBits := 56 * 8 // 56 bytes = 448 bits
+	for nLsb := 1; nLsb <= 4; nLsb++ {
+		log.Printf("[DEBUG] ExtractMessageAutoDetect: Trying %d-LSB extraction", nLsb)
+
+		// Try both random and sequential start positions
+		for _, useRandomStart := range []bool{false, true} {
+			if useRandomStart && stegoKey == "" {
+				continue // Skip random start if no key provided
+			}
+
+			startPos := 0
+			if useRandomStart {
+				startPos = generateRandomStart(stegoKey, totalSamples, metadataBits, nLsb)
+			}
+
+			log.Printf("[DEBUG] ExtractMessageAutoDetect: Trying %d-LSB with random_start=%t, start_pos=%d", nLsb, useRandomStart, startPos)
+
+			// Extract metadata
+			metadataBitArray := extractBitsFromSamples(pcmData, startPos, nLsb, metadataBits)
+			metadata := bitsToBytes(metadataBitArray)
+
+			// Try to parse metadata
+			filename, fileSize, useEncryption, detectedRandomStart, detectedNLsb, err := parseMetadataWithNLsb(metadata)
+			if err != nil {
+				log.Printf("[DEBUG] ExtractMessageAutoDetect: Failed to parse metadata for %d-LSB, random=%t: %v", nLsb, useRandomStart, err)
+				continue
+			}
+
+			// Validate that detected parameters match our attempt
+			if detectedNLsb != nLsb || detectedRandomStart != useRandomStart {
+				log.Printf("[DEBUG] ExtractMessageAutoDetect: Parameter mismatch - detected nLSB=%d (expected %d), random=%t (expected %t)",
+					detectedNLsb, nLsb, detectedRandomStart, useRandomStart)
+				continue
+			}
+
+			// Additional validation: check if file size is reasonable
+			if fileSize <= 0 || fileSize > 50*1024*1024 { // Max 50MB
+				log.Printf("[DEBUG] ExtractMessageAutoDetect: Invalid file size: %d", fileSize)
+				continue
+			}
+
+			log.Printf("[INFO] ExtractMessageAutoDetect: Successfully detected parameters - nLSB=%d, encryption=%t, random_start=%t, file_size=%d",
+				nLsb, useEncryption, useRandomStart, fileSize)
+
+			// Extract secret data
+			currentBitPos := metadataBits
+			secretBits := extractBitsFromSamples(pcmData, startPos, nLsb, currentBitPos+fileSize*8)
+			secretData := bitsToBytes(secretBits[currentBitPos:])
+
+			// Apply decryption if needed
+			if useEncryption && stegoKey != "" {
+				cryptoSvc := NewCryptographyService()
+				secretData = cryptoSvc.VigenereCipher(secretData, stegoKey, false)
+			} else if useEncryption && stegoKey == "" {
+				log.Printf("[ERROR] ExtractMessageAutoDetect: Encryption detected but no key provided")
+				return nil, "", errors.New("file was encrypted during embedding, but no decryption key provided")
+			}
+
+			// Use provided filename or extracted filename
+			if outputFilename == "" {
+				if filename != "" {
+					outputFilename = filename
+				} else {
+					outputFilename = "extracted_secret.bin"
+				}
+			}
+
+			duration := time.Since(start)
+			log.Printf("[INFO] ExtractMessageAutoDetect: Extraction completed successfully (extracted_size: %d bytes, filename: '%s', duration: %v)",
+				len(secretData), outputFilename, duration)
+
+			return secretData, outputFilename, nil
+		}
+	}
+
+	return nil, "", errors.New("failed to auto-detect embedding parameters - file may not contain steganographic data or wrong key provided")
 }
 
 // CreateMetadata creates metadata for embedding
