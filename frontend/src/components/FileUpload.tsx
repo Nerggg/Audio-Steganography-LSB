@@ -49,7 +49,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, accept = "audio/*
     setIsDragOver(false)
 
     const file = e.dataTransfer.files[0]
-    if (file && file.type.startsWith("audio/")) {
+    if (label == "COVER AUDIO FILE" && file && file.type.startsWith("audio/")) {
+      handleFileSelect(file)
+    } else if (label == "SECRET FILE") {
       handleFileSelect(file)
     }
   }
@@ -74,10 +76,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, accept = "audio/*
     const sizes = ["Bytes", "KB", "MB", "GB"]
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return `${Number.parseFloat((bytes / k ** i).toFixed(2))} ${sizes[i]}`
-  }
-
-  const getFileIcon = () => {
-    return "🎵" // Audio file icon
   }
 
   return (
@@ -119,7 +117,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, accept = "audio/*
           </div>
         ) : currentFile ? (
           <div className="text-center">
-            <div className="text-4xl mb-2">{getFileIcon()}</div>
             <p className="text-green-400 font-mono font-bold mb-1">{currentFile.name}</p>
             <p className="text-gray-400 text-sm">{formatFileSize(currentFile.size)}</p>
             <div className="mt-3 flex items-center justify-center gap-2">
