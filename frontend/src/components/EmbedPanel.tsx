@@ -25,6 +25,10 @@ const EmbedPanel: React.FC<EmbedPanelProps> = ({ onStatusUpdate, onCapacityUpdat
   })
   const [isEmbedding, setIsEmbedding] = useState(false)
 
+  // const port = process.env.NEXT_PUBLIC_API_PORT || "8080"
+  const port = "8080"
+  console.log(port)
+
   // Calculate capacity when cover audio is loaded
   useEffect(() => {
     if (coverAudio) {
