@@ -2,11 +2,8 @@ package models
 
 type ExtractRequest struct {
 	StegoAudio     []byte `json:"stego_audio"`
-	NLsb           int    `json:"n_lsb"`
-	StegoKey       string `json:"stego_key"`
-	UseEncryption  bool   `json:"use_encryption"`
-	UseRandomStart bool   `json:"use_random_start"`
-	OutputFilename string `json:"output_filename"`
+	StegoKey       string `json:"stego_key,omitempty"`
+	OutputFilename string `json:"output_filename,omitempty"`
 }
 
 type ExtractResponse struct {
