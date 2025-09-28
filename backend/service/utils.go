@@ -43,35 +43,30 @@ func bitsToBytes(bits []int) []byte {
 	return data
 }
 
-// generateRandomStart generates a random starting position based on the seed
-func generateRandomStart(seed string, totalSamples, bitsToEmbed, nLsb int) int {
-	// Use FNV hash for consistent pseudo-random generation
-	hasher := fnv.New32a()
-	hasher.Write([]byte(seed))
-	hashValue := hasher.Sum32()
-
-	// Calculate maximum safe starting position
-	maxSafeBits := totalSamples * nLsb
-	maxSafeStart := maxSafeBits - bitsToEmbed
-
-	if maxSafeStart <= 0 {
-		log.Printf("[WARN] generateRandomStart: No safe random position available, using start position 0")
+// samplesNeeded returns how many samples are required to embed totalBits using nLsb per sample.
+func samplesNeeded(totalBits, nLsb int) int {
+	if nLsb <= 0 {
 		return 0
 	}
+	return (totalBits + nLsb - 1) / nLsb
+}
 
-	// Convert to sample position (bits to samples)
-	maxSafeSampleStart := maxSafeStart / nLsb
-
-	// Generate random start position within safe bounds
-	randomStart := int(hashValue) % maxSafeSampleStart
-	if randomStart < 0 {
-		randomStart = -randomStart
+// generatePayloadStart computes a deterministic start sample for payload embedding based on the stego key.
+// It reserves the first reservedSamples (used by metadata) and fits payloadSamples fully within totalSamples.
+// If fitting is impossible, returns -1.
+func generatePayloadStart(seed string, totalSamples, reservedSamples, payloadSamples int) int {
+	available := totalSamples - reservedSamples - payloadSamples
+	if available < 0 {
+		return -1
 	}
-
-	log.Printf("[DEBUG] generateRandomStart: Generated position %d (max_safe: %d, total_samples: %d, bits_to_embed: %d)",
-		randomStart, maxSafeSampleStart, totalSamples, bitsToEmbed)
-
-	return randomStart
+	hasher := fnv.New32a()
+	hasher.Write([]byte(seed))
+	hv := hasher.Sum32()
+	if available == 0 {
+		return reservedSamples
+	}
+	offset := int(hv % uint32(available+1))
+	return reservedSamples + offset
 }
 
 // embedBitsIntoSamples embeds bits into audio samples using LSB
@@ -239,4 +234,107 @@ func parseWAVHeader(wavData []byte) (dataOffset int, dataSize uint32, err error)
 	}
 
 	return 0, 0, fmt.Errorf("WAV file does not contain a data chunk")
+}
+
+// hasExtension checks if a filename has an extension
+func hasExtension(filename string) bool {
+	for i := len(filename) - 1; i >= 0; i-- {
+		if filename[i] == '.' {
+			return i < len(filename)-1 // has extension if there's at least one char after the dot
+		}
+		if filename[i] == '/' || filename[i] == '\\' {
+			break // reached path separator, no extension found
+		}
+	}
+	return false
+}
+
+// detectFileExtension detects file type based on file signature (magic bytes) and returns appropriate extension
+func detectFileExtension(data []byte) string {
+	if len(data) < 4 {
+		return ""
+	}
+
+	// Check common file signatures
+	switch {
+	// Images
+	case len(data) >= 2 && data[0] == 0xFF && data[1] == 0xD8:
+		return ".jpg"
+	case len(data) >= 8 && string(data[:8]) == "\x89PNG\r\n\x1a\n":
+		return ".png"
+	case len(data) >= 6 && string(data[:6]) == "GIF87a" || string(data[:6]) == "GIF89a":
+		return ".gif"
+	case len(data) >= 2 && string(data[:2]) == "BM":
+		return ".bmp"
+	case len(data) >= 4 && string(data[:4]) == "RIFF":
+		// Could be WAV, WebP, or other RIFF formats
+		if len(data) >= 12 && string(data[8:12]) == "WAVE" {
+			return ".wav"
+		}
+		return ".webp" // assume WebP if not WAV
+
+	// Documents
+	case len(data) >= 4 && string(data[:4]) == "%PDF":
+		return ".pdf"
+	case len(data) >= 8 &&
+		(data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04) || // ZIP
+		(data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x05 && data[3] == 0x06) || // Empty ZIP
+		(data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x07 && data[3] == 0x08): // Spanned ZIP
+		// Could be ZIP, DOCX, XLSX, etc.
+		if len(data) > 30 {
+			content := strings.ToLower(string(data[:100]))
+			if strings.Contains(content, "word/") {
+				return ".docx"
+			} else if strings.Contains(content, "xl/") {
+				return ".xlsx"
+			} else if strings.Contains(content, "ppt/") {
+				return ".pptx"
+			}
+		}
+		return ".zip"
+	case len(data) >= 8 && data[0] == 0xD0 && data[1] == 0xCF && data[2] == 0x11 && data[3] == 0xE0:
+		return ".doc" // or .xls, .ppt - generic Microsoft Office
+
+	// Archives
+	case len(data) >= 6 && string(data[:6]) == "Rar!\x1a\x07":
+		return ".rar"
+	case len(data) >= 4 && data[0] == 0x37 && data[1] == 0x7A && data[2] == 0xBC && data[3] == 0xAF:
+		return ".7z"
+
+	// Text/Code files
+	case len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF:
+		return ".txt" // UTF-8 BOM
+	default:
+		// Check if it's likely text content
+		if isLikelyText(data) {
+			return ".txt"
+		}
+	}
+
+	return "" // Unknown file type
+}
+
+// isLikelyText checks if the data appears to be text-based
+func isLikelyText(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	// Sample first 512 bytes or less
+	sampleSize := len(data)
+	if sampleSize > 512 {
+		sampleSize = 512
+	}
+
+	textChars := 0
+	for i := 0; i < sampleSize; i++ {
+		b := data[i]
+		// Count printable ASCII characters, tabs, newlines, carriage returns
+		if (b >= 32 && b <= 126) || b == 9 || b == 10 || b == 13 {
+			textChars++
+		}
+	}
+
+	// If more than 80% of the sample are text characters, consider it text
+	return float64(textChars)/float64(sampleSize) > 0.8
 }

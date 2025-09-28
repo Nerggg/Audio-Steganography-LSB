@@ -13,8 +13,6 @@ func NewCryptographyService() CryptographyService {
 }
 
 // VigenereCipher performs XOR-based encryption/decryption using a repeating key
-// This is a modern variant of the Vigenère cipher optimized for binary data
-// Note: XOR is symmetric, so encryption and decryption are the same operation
 func (c *cryptographyService) VigenereCipher(data []byte, key string, encrypt bool) []byte {
 	if len(key) == 0 {
 		log.Printf("[WARN] VigenereCipher: Empty key provided, returning data unchanged")

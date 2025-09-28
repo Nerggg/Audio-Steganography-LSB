@@ -73,12 +73,12 @@ const docTemplate = `{
         },
         "/embed": {
             "post": {
-                "description": "Embeds a secret file into an MP3 audio file using LSB steganography. Returns the stego audio file in MP3 format with embedded data and quality metrics.",
+                "description": "Embeds a secret file into an audio file (MP3 or WAV) using LSB steganography. If input is WAV, only the data chunk (audio samples) is modified and headers/metadata remain untouched. Output is provided in WAV format to preserve LSB data.",
                 "consumes": [
                     "multipart/form-data"
                 ],
                 "produces": [
-                    "audio/mpeg"
+                    "audio/wav"
                 ],
                 "tags": [
                     "Steganography"
@@ -87,7 +87,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "file",
-                        "description": "MP3 audio file for embedding (max 100MB)",
+                        "description": "Audio file for embedding (MP3 or WAV, max 100MB)",
                         "name": "audio",
                         "in": "formData",
                         "required": true
@@ -197,7 +197,7 @@ const docTemplate = `{
         },
         "/extract": {
             "post": {
-                "description": "Extracts hidden secret data from a stego audio file (MP3 or WAV) that was created using LSB steganography. Returns the original secret file.",
+                "description": "Extracts hidden secret data from a stego audio file (MP3 or WAV) with automatic parameter detection. The system automatically detects LSB method, encryption, and random start settings from the embedded metadata.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -217,47 +217,14 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "enum": [
-                            1,
-                            2,
-                            3,
-                            4
-                        ],
-                        "type": "integer",
-                        "description": "Number of LSB bits used during embedding (1-4)",
-                        "name": "lsb",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "enum": [
-                            "true",
-                            "false"
-                        ],
                         "type": "string",
-                        "description": "Whether the embedded data was encrypted using Vigenère cipher",
-                        "name": "use_encryption",
-                        "in": "formData"
-                    },
-                    {
-                        "enum": [
-                            "true",
-                            "false"
-                        ],
-                        "type": "string",
-                        "description": "Whether random starting position was used during embedding",
-                        "name": "use_random_start",
-                        "in": "formData"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Steganography key used for decryption and random position generation (required if encryption/random start was used, max 25 characters)",
+                        "description": "Steganography key for decryption (required only if the embedded data was encrypted, max 25 characters)",
                         "name": "stego_key",
                         "in": "formData"
                     },
                     {
                         "type": "string",
-                        "description": "Desired filename for the extracted secret file",
+                        "description": "Desired filename for the extracted secret file (optional)",
                         "name": "output_filename",
                         "in": "formData"
                     }
@@ -275,7 +242,7 @@ const docTemplate = `{
                             },
                             "X-Extraction-Method": {
                                 "type": "string",
-                                "description": "LSB method used for extraction"
+                                "description": "Auto-detected LSB method used for extraction"
                             },
                             "X-Processing-Time": {
                                 "type": "int",
@@ -288,7 +255,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request: Invalid file or extraction parameters",
+                        "description": "Bad Request: Invalid file format",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -300,7 +267,7 @@ const docTemplate = `{
                         }
                     },
                     "500": {
-                        "description": "Internal Server Error",
+                        "description": "Internal Server Error or extraction failed",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
