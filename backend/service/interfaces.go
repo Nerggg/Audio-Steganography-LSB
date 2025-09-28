@@ -35,10 +35,4 @@ type AudioService interface {
 type AudioEncoder interface {
 	// EncodeToWAV encodes PCM data to WAV format
 	EncodeToWAV(pcmData []byte, sampleRate int) ([]byte, error)
-
-	// EncodeToMP3 encodes PCM data to MP3 format using quantization noise steganography
-	EncodeToMP3(pcmData []byte, sampleRate int) ([]byte, error)
-
-	// extractFromSteganographicMP3 extracts PCM data from steganographic MP3 format
-	extractFromSteganographicMP3(mp3Data []byte) ([]byte, error)
 }
