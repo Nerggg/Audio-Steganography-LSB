@@ -2,437 +2,335 @@ package service
 
 import (
 	"bytes"
-	"errors"
-	"fmt"
-	"io"
-	"log"
-	"time"
+	"crypto/sha256"
+	"encoding/binary"
+	"math/rand"
 
 	"github.com/Nerggg/Audio-Steganography-LSB/backend/models"
-	"github.com/hajimehoshi/go-mp3"
 )
 
-// steganographyService implements the SteganographyService interface
-type steganographyService struct{}
-
-// NewSteganographyService creates a new steganography service instance
-func NewSteganographyService() SteganographyService {
-	return &steganographyService{}
+// Implementation struct which depends on Crypto and Audio services
+type stegoService struct {
+	crypto CryptographyService
+	audio  AudioService
 }
 
-// CalculateCapacity calculates the embedding capacity for different LSB methods
-func (s *steganographyService) CalculateCapacity(audioData []byte) (*models.CapacityResult, error) {
-	start := time.Now()
-	log.Printf("[DEBUG] CalculateCapacity: Starting capacity calculation for audio data (size: %d bytes)", len(audioData))
-
-	var pcmData []byte
-	var err error
-
-	// Try MP3 decoder first
-	audioReader := bytes.NewReader(audioData)
-	decoder, err := mp3.NewDecoder(audioReader)
-	if err == nil {
-		// Successfully created MP3 decoder
-		pcmData, err = io.ReadAll(decoder)
-		if err != nil {
-			log.Printf("[ERROR] CalculateCapacity: Failed to read PCM data from MP3: %v", err)
-			return nil, errors.New("could not read decoded audio stream: " + err.Error())
-		}
-		log.Printf("[DEBUG] CalculateCapacity: Successfully decoded MP3 to PCM (size: %d bytes)", len(pcmData))
-	} else {
-		// MP3 decoder failed, try WAV
-		log.Printf("[DEBUG] CalculateCapacity: MP3 decoder failed, trying WAV: %v", err)
-
-		// Parse WAV header to extract PCM data
-		dataOffset, dataSize, err := parseWAVHeader(audioData)
-		if err != nil {
-			log.Printf("[ERROR] CalculateCapacity: Failed to parse WAV header: %v", err)
-			return nil, errors.New("unsupported audio format: not a valid MP3 or WAV file")
-		}
-
-		// For capacity calculation, get the PCM data
-		if len(audioData) <= dataOffset {
-			log.Printf("[ERROR] CalculateCapacity: WAV file too small to contain PCM data")
-			return nil, errors.New("WAV file is too small or corrupted")
-		}
-
-		pcmData = audioData[dataOffset : dataOffset+int(dataSize)]
-		log.Printf("[DEBUG] CalculateCapacity: Successfully extracted PCM from WAV (size: %d bytes, data_offset: %d)",
-			len(pcmData), dataOffset)
-	}
-
-	// Calculate total samples (16-bit stereo = 2 bytes per sample)
-	totalSamples := len(pcmData) / 2
-
-	// Handle odd PCM data length
-	if len(pcmData)%2 != 0 {
-		totalSamples = (len(pcmData) - 1) / 2
-		log.Printf("[WARN] CalculateCapacity: Odd PCM data length detected, adjusted samples to %d", totalSamples)
-	}
-
-	if totalSamples == 0 {
-		log.Printf("[ERROR] CalculateCapacity: No samples found in audio data")
-		return nil, errors.New("no audio samples found in the file")
-	}
-
-	// Calculate capacities for different LSB methods (in bytes)
-	capacities := &models.CapacityResult{
-		OneLSB:   (totalSamples * 1) / 8, // 1 bit per sample / 8 bits per byte
-		TwoLSB:   (totalSamples * 2) / 8, // 2 bits per sample / 8 bits per byte
-		ThreeLSB: (totalSamples * 3) / 8, // 3 bits per sample / 8 bits per byte
-		FourLSB:  (totalSamples * 4) / 8, // 4 bits per sample / 8 bits per byte
-	}
-
-	duration := time.Since(start)
-	log.Printf("[INFO] CalculateCapacity: Completed successfully (total_samples: %d, capacities: 1LSB=%d, 2LSB=%d, duration: %v)",
-		totalSamples, capacities.OneLSB, capacities.TwoLSB, duration)
-
-	return capacities, nil
+func NewStegoService(crypto CryptographyService, audio AudioService) SteganographyService {
+	return &stegoService{crypto: crypto, audio: audio}
 }
 
-// EmbedMessage embeds a secret message into audio data
-func (s *steganographyService) EmbedMessage(req *models.EmbedRequest, secretData []byte, metadata []byte) ([]byte, float64, error) {
-	start := time.Now()
-	log.Printf("[DEBUG] EmbedMessage: Starting embed operation (audio_size: %d bytes, secret_size: %d bytes, metadata_size: %d bytes, nLSB: %d, encryption: %t, random_start: %t)",
-		len(req.CoverAudio), len(secretData), len(metadata), req.NLsb, req.UseEncryption, req.UseRandomStart)
+/*
+ Format header (binary, fixed order):
+ - 8 bytes magic: "ASTEGv1\000" (8 bytes)
+ - 1 byte nLSB (1..4)
+ - 1 byte flags: bit0 = UseEncryption, bit1 = UseRandomStart
+ - 2 bytes filename length (uint16 big endian)
+ - 4 bytes secret payload length (uint32 big endian)  <-- length AFTER encryption (i.e. stored)
+ - filename bytes (utf-8) [filename length]
+ - secret bytes ...
+*/
 
-	// Get PCM data from input (MP3 decode or WAV data chunk)
-	var pcmData []byte
-	var originalPCM []byte
-	var isWAV bool
-	var wavDataCopy []byte
-	var sampleRateForEncode int
+// helper constants
+var (
+	magicBytes = []byte("ASTEGv1\x00")
+)
 
-	// Try as MP3 first
-	audioReader := bytes.NewReader(req.CoverAudio)
-	decoder, err := mp3.NewDecoder(audioReader)
-	if err == nil {
-		// Successfully decoded as MP3
-		pcmData, err = io.ReadAll(decoder)
-		if err != nil {
-			log.Printf("[ERROR] EmbedMessage: Failed to read PCM data from MP3: %v", err)
-			return nil, 0, errors.New("failed to read PCM data: " + err.Error())
-		}
-		log.Printf("[DEBUG] EmbedMessage: Successfully decoded MP3 to PCM (pcm_size: %d bytes)", len(pcmData))
-		// Keep a copy for PSNR
-		originalPCM = make([]byte, len(pcmData))
-		copy(originalPCM, pcmData)
-		sampleRateForEncode = decoder.SampleRate()
-		isWAV = false
-	} else {
-		// Not MP3; try WAV path by parsing header and getting a slice to data chunk
-		log.Printf("[DEBUG] EmbedMessage: MP3 decode failed, trying WAV path: %v", err)
-		dataOffset, dataSize, parseErr := parseWAVHeader(req.CoverAudio)
-		if parseErr != nil {
-			log.Printf("[ERROR] EmbedMessage: Unsupported audio format (not MP3 or WAV): %v", parseErr)
-			return nil, 0, errors.New("unsupported audio format: only MP3 or WAV are supported")
-		}
+// ------------------ Helpers ------------------
 
-		// Create a working copy of the entire WAV file so we never mutate the input in-place
-		wavDataCopy = make([]byte, len(req.CoverAudio))
-		copy(wavDataCopy, req.CoverAudio)
-
-		// Obtain a slice referencing ONLY the data chunk; edits will affect wavDataCopy's data chunk
-		end := dataOffset + int(dataSize)
-		if end > len(wavDataCopy) {
-			log.Printf("[ERROR] EmbedMessage: WAV data chunk exceeds file bounds (offset=%d size=%d len=%d)", dataOffset, dataSize, len(wavDataCopy))
-			return nil, 0, errors.New("invalid WAV structure: data chunk out of bounds")
-		}
-		pcmData = wavDataCopy[dataOffset:end]
-
-		// Prepare original PCM for PSNR (copy from original input's data chunk)
-		originalPCM = make([]byte, len(pcmData))
-		copy(originalPCM, req.CoverAudio[dataOffset:end])
-
-		// In WAV path, we'll return the modified WAV with headers untouched
-		isWAV = true
-	}
-
-	capacityResult, err := s.CalculateCapacity(req.CoverAudio)
-	if err != nil {
-		log.Printf("[ERROR] EmbedMessage: Failed to calculate capacity: %v", err)
-		return nil, 0, fmt.Errorf("failed to calculate capacity: %v", err)
-	}
-
-	metadataSize := len(metadata)
-	secretSize := len(secretData)
-	totalDataSize := metadataSize + secretSize
-
-	// Get the appropriate capacity based on nLSB
-	var maxCapacity int
-	switch req.NLsb {
-	case 1:
-		maxCapacity = capacityResult.OneLSB
-	case 2:
-		maxCapacity = capacityResult.TwoLSB
-	case 3:
-		maxCapacity = capacityResult.ThreeLSB
-	case 4:
-		maxCapacity = capacityResult.FourLSB
-	default:
-		log.Printf("[ERROR] EmbedMessage: Invalid nLSB value: %d", req.NLsb)
-		return nil, 0, fmt.Errorf("invalid nLSB value: %d (must be 1-4)", req.NLsb)
-	}
-
-	log.Printf("[DEBUG] EmbedMessage: Capacity check (data_size: %d bytes, max_capacity: %d bytes for %d-LSB)",
-		totalDataSize, maxCapacity, req.NLsb)
-
-	if totalDataSize > maxCapacity {
-		log.Printf("[ERROR] EmbedMessage: Insufficient capacity - need %d bytes, only %d bytes available", totalDataSize, maxCapacity)
-		return nil, 0, fmt.Errorf("insufficient capacity: need %d bytes, but only %d bytes available", totalDataSize, maxCapacity)
-	}
-
-	// Apply encryption if requested
-	dataToEmbed := secretData
-	if req.UseEncryption && req.StegoKey != "" {
-		log.Printf("[DEBUG] EmbedMessage: Applying Vigenère cipher encryption with key length: %d", len(req.StegoKey))
-		cryptoSvc := NewCryptographyService()
-		dataToEmbed = cryptoSvc.VigenereCipher(secretData, req.StegoKey, true)
-		log.Printf("[DEBUG] EmbedMessage: Data encrypted (original: %d bytes, encrypted: %d bytes)", len(secretData), len(dataToEmbed))
-	}
-
-	// Combine metadata and (possibly encrypted) secret data
-	finalDataToEmbed := append(metadata, dataToEmbed...)
-	log.Printf("[DEBUG] EmbedMessage: Final data to embed: %d bytes (metadata: %d + data: %d)", len(finalDataToEmbed), len(metadata), len(dataToEmbed))
-
-	// Convert to bit arrays for metadata and payload
-	metadataBits := bytesToBits(metadata)
-	payloadBits := bytesToBits(dataToEmbed)
-	log.Printf("[DEBUG] EmbedMessage: Bit sizes -> metadata: %d, payload: %d", len(metadataBits), len(payloadBits))
-
-	// Determine layout: always put metadata at the start (sample 0), and payload after a randomized offset (if enabled)
-	totalSamples := len(pcmData) / 2
-	metaSamples := samplesNeeded(len(metadataBits), req.NLsb)
-	payloadSamples := samplesNeeded(len(payloadBits), req.NLsb)
-
-	// Capacity re-check in sample terms
-	if metaSamples+payloadSamples > totalSamples {
-		return nil, 0, fmt.Errorf("insufficient capacity: need %d samples (meta %d + payload %d), have %d", metaSamples+payloadSamples, metaSamples, payloadSamples, totalSamples)
-	}
-
-	// Embed metadata at start position 0
-	if err = embedBitsIntoSamples(pcmData, metadataBits, 0, req.NLsb); err != nil {
-		log.Printf("[ERROR] EmbedMessage: Failed to embed metadata: %v", err)
-		return nil, 0, err
-	}
-
-	// Compute payload start
-	startPos := metaSamples
-	if req.UseRandomStart && req.StegoKey != "" {
-		pos := generatePayloadStart(req.StegoKey, totalSamples, metaSamples, payloadSamples)
-		if pos < 0 {
-			return nil, 0, fmt.Errorf("insufficient capacity for randomized payload placement")
-		}
-		startPos = pos
-	}
-	log.Printf("[DEBUG] EmbedMessage: Payload start position: %d (metaSamples=%d, totalSamples=%d)", startPos, metaSamples, totalSamples)
-
-	// Embed payload bits at startPos
-	log.Printf("[DEBUG] EmbedMessage: Starting LSB embedding for payload...")
-	err = embedBitsIntoSamples(pcmData, payloadBits, startPos, req.NLsb)
-	if err != nil {
-		log.Printf("[ERROR] EmbedMessage: Failed to embed payload bits: %v", err)
-		return nil, 0, err
-	}
-	log.Printf("[DEBUG] EmbedMessage: LSB embedding completed successfully (meta at 0, payload at %d)", startPos)
-
-	// Calculate PSNR using original vs modified PCM
-	audioSvc := NewAudioService()
-	psnr := audioSvc.CalculatePSNR(originalPCM, pcmData)
-	log.Printf("[INFO] EmbedMessage: PSNR calculated: %.2f dB", psnr)
-
-	// Return output depending on input type
-	if isWAV {
-		// For WAV input, return the entire WAV file with only the data chunk modified
-		duration := time.Since(start)
-		log.Printf("[INFO] EmbedMessage: Embed (WAV) completed successfully (output_size: %d bytes, psnr: %.2f dB, duration: %v)",
-			len(wavDataCopy), psnr, duration)
-		return wavDataCopy, psnr, nil
-	}
-
-	// For MP3 input, encode the modified PCM to WAV
-	log.Printf("[DEBUG] EmbedMessage: Encoding modified PCM to WAV (from MP3 input)...")
-	encoder := NewAudioEncoder()
-	wavData, err := encoder.EncodeToWAV(pcmData, sampleRateForEncode)
-	if err != nil {
-		log.Printf("[ERROR] EmbedMessage: Failed to encode to WAV: %v", err)
-		return nil, 0, fmt.Errorf("failed to encode audio to WAV: %v", err)
-	}
-
-	duration := time.Since(start)
-	log.Printf("[INFO] EmbedMessage: Embed (MP3->WAV) completed successfully (output_size: %d bytes, psnr: %.2f dB, duration: %v)",
-		len(wavData), psnr, duration)
-
-	return wavData, psnr, nil
+func checkSync(b byte) bool {
+	// sync word first byte must be 0xFF, second byte top 3 bits 111 (0xE0)
+	return b == 0xFF
 }
 
-// ExtractMessage extracts a secret message from audio data with auto-detection of parameters
-func (s *steganographyService) ExtractMessage(req *models.ExtractRequest, audioData []byte) ([]byte, string, error) {
-	start := time.Now()
-	log.Printf("[DEBUG] ExtractMessage: Starting extraction operation (audio_size: %d bytes, stego_key_provided: %t)",
-		len(req.StegoAudio), req.StegoKey != "")
+func isFrameSyncAt(data []byte, i int) bool {
+	if i+1 >= len(data) {
+		return false
+	}
+	return data[i] == 0xFF && (data[i+1]&0xE0) == 0xE0
+}
 
-	var pcmData []byte
+// parseID3v2Size returns offset after tag (i.e., first byte of audio or next items).
+// If no ID3 header, returns 0.
+func parseID3v2Size(data []byte) int {
+	if len(data) < 10 {
+		return 0
+	}
+	if string(data[0:3]) != "ID3" {
+		return 0
+	}
+	// synchsafe size in bytes 6..9 (4 bytes)
+	if len(data) < 10 {
+		return 0
+	}
+	size := int((uint32(data[6])&0x7F)<<21 |
+		(uint32(data[7])&0x7F)<<14 |
+		(uint32(data[8])&0x7F)<<7 |
+		(uint32(data[9]) & 0x7F))
+	return 10 + size
+}
 
-	// Try to decode as standard MP3 format
-	{
-		audioReader := bytes.NewReader(req.StegoAudio)
-		decoder, err := mp3.NewDecoder(audioReader)
-		if err == nil {
-			pcmData, err = io.ReadAll(decoder)
-			if err != nil {
-				log.Printf("[ERROR] ExtractMessage: Failed to read MP3 PCM data: %v", err)
-				return nil, "", errors.New("failed to read MP3 PCM data: " + err.Error())
+// collectPayloadIndices returns a slice of indices of bytes that are considered "payload bytes"
+// i.e., bytes between frame header (4 bytes header assumed) and next sync. This is a *best-effort* approach.
+func collectPayloadIndices(data []byte) []int {
+	var indices []int
+	// start after ID3 tag
+	start := parseID3v2Size(data)
+	i := start
+	for i < len(data)-1 {
+		if isFrameSyncAt(data, i) {
+			// approximate header size: 4 bytes
+			payloadStart := i + 4
+			j := payloadStart
+			// find next sync
+			for j < len(data)-1 {
+				if isFrameSyncAt(data, j) {
+					break
+				}
+				indices = append(indices, j)
+				j++
 			}
-			log.Printf("[DEBUG] ExtractMessage: Successfully decoded MP3 to PCM (pcm_size: %d bytes)", len(pcmData))
+			// continue scanning from j (next sync)
+			i = j
 		} else {
-			log.Printf("[DEBUG] ExtractMessage: MP3 decoding failed, trying WAV format: %v", err)
-			// Try to handle as WAV format
-			if len(req.StegoAudio) > 44 && string(req.StegoAudio[:4]) == "RIFF" && string(req.StegoAudio[8:12]) == "WAVE" {
-				// Parse WAV header to find data chunk
-				dataOffset, dataSize, parseErr := parseWAVHeader(req.StegoAudio)
-				if parseErr != nil {
-					log.Printf("[ERROR] ExtractMessage: Failed to parse WAV header: %v", parseErr)
-					return nil, "", fmt.Errorf("failed to parse WAV header: %v", parseErr)
-				}
-
-				if dataOffset+int(dataSize) > len(req.StegoAudio) {
-					log.Printf("[ERROR] ExtractMessage: Invalid WAV file - data chunk extends beyond file")
-					return nil, "", errors.New("invalid WAV file structure")
-				}
-
-				pcmData = req.StegoAudio[dataOffset : dataOffset+int(dataSize)]
-				log.Printf("[DEBUG] ExtractMessage: Successfully parsed WAV format (pcm_size: %d bytes, data_offset: %d)", len(pcmData), dataOffset)
-			} else {
-				log.Printf("[ERROR] ExtractMessage: Unable to decode audio format (not MP3 or WAV)")
-				return nil, "", errors.New("unsupported audio format: file must be MP3 or WAV")
-			}
+			i++
 		}
 	}
-
-	totalSamples := len(pcmData) / 2
-	metadataBits := 56 * 8
-
-	var filename string
-	var fileSize int
-	var useEncryption bool
-	var useRandomStart bool
-	var detectedNLsb int
-
-	for tryNLsb := 1; tryNLsb <= 4; tryNLsb++ {
-		metaBits := extractBitsFromSamples(pcmData, 0, tryNLsb, metadataBits)
-		md := bitsToBytes(metaBits)
-		f, sz, enc, rnd, err := parseMetadata(md)
-		if err != nil {
-			continue
-		}
-		if sz <= 0 || sz > 50*1024*1024 {
-			continue
-		}
-		// basic capacity check
-		metaSamples := samplesNeeded(metadataBits, tryNLsb)
-		payloadSamples := samplesNeeded(sz*8, tryNLsb)
-		if metaSamples+payloadSamples > totalSamples {
-			continue
-		}
-		filename, fileSize, useEncryption, useRandomStart = f, sz, enc, rnd
-		detectedNLsb = tryNLsb
-		break
-	}
-
-	if detectedNLsb == 0 {
-		return nil, "", fmt.Errorf("failed to auto-detect metadata: unsupported or corrupted stego audio")
-	}
-
-	// Compute payload start (deterministic if random start was used during embed)
-	metaSamples := samplesNeeded(metadataBits, detectedNLsb)
-	payloadSamples := samplesNeeded(fileSize*8, detectedNLsb)
-	startPos := metaSamples
-	if useRandomStart && req.StegoKey == "" {
-		return nil, "", fmt.Errorf("stego key is required to extract data when random start was used")
-	}
-	if useRandomStart && req.StegoKey != "" {
-		pos := generatePayloadStart(req.StegoKey, totalSamples, metaSamples, payloadSamples)
-		if pos < 0 {
-			return nil, "", fmt.Errorf("invalid stego layout: not enough samples for payload")
-		}
-		startPos = pos
-	}
-
-	// Extract payload directly
-	secretBits := extractBitsFromSamples(pcmData, startPos, detectedNLsb, fileSize*8)
-	secretData := bitsToBytes(secretBits)
-
-	// Apply decryption if needed
-	if useEncryption && req.StegoKey != "" {
-		cryptoSvc := NewCryptographyService()
-		secretData = cryptoSvc.VigenereCipher(secretData, req.StegoKey, false)
-	}
-
-	// Use provided filename or extracted filename with extension auto-detection
-	outputFilename := req.OutputFilename
-	if outputFilename == "" {
-		if filename != "" {
-			outputFilename = filename
-			// Ensure the filename has an extension by auto-detecting file type if needed
-			if !hasExtension(outputFilename) {
-				detectedExt := detectFileExtension(secretData)
-				if detectedExt != "" {
-					outputFilename += detectedExt
-					log.Printf("[DEBUG] ExtractMessage: Added detected extension '%s' to filename '%s'", detectedExt, filename)
-				}
-			}
-		} else {
-			// Try to detect file type and provide appropriate extension
-			detectedExt := detectFileExtension(secretData)
-			if detectedExt != "" {
-				outputFilename = "extracted_secret" + detectedExt
-			} else {
-				outputFilename = "extracted_secret.bin"
-			}
-			log.Printf("[DEBUG] ExtractMessage: Generated filename '%s' with detected extension", outputFilename)
-		}
-	}
-
-	duration := time.Since(start)
-	log.Printf("[INFO] ExtractMessage: Extraction completed successfully (extracted_size: %d bytes, filename: '%s', duration: %v)",
-		len(secretData), outputFilename, duration)
-
-	return secretData, outputFilename, nil
+	return indices
 }
 
-// CreateMetadata creates metadata for embedding
-func (s *steganographyService) CreateMetadata(filename string, fileSize int, useEncryption, useRandomStart bool, nLsb int) []byte {
-	log.Printf("[DEBUG] CreateMetadata: Creating metadata (filename: '%s', file_size: %d, encryption: %t, random_start: %t, nLSB: %d)",
-		filename, fileSize, useEncryption, useRandomStart, nLsb)
-
-	metadata := make([]byte, 56) // Fixed size metadata
-
-	// Filename (first 32 bytes, null-padded)
-	if len(filename) > 32 {
-		filename = filename[:32]
+// deterministicStartIndex chooses deterministic start bit index from key and capacityBits
+func deterministicStartIndex(key string, capacityBits int) int {
+	if capacityBits == 0 {
+		return 0
 	}
-	copy(metadata[:32], filename)
+	h := sha256.Sum256([]byte(key))
+	seed := int64(binary.BigEndian.Uint64(h[:8]))
+	r := rand.New(rand.NewSource(seed))
+	return r.Intn(capacityBits)
+}
 
-	// File size (4 bytes, big-endian)
-	metadata[32] = byte(fileSize >> 24)
-	metadata[33] = byte(fileSize >> 16)
-	metadata[34] = byte(fileSize >> 8)
-	metadata[35] = byte(fileSize)
+// ------------------ Interface Implementations ------------------
 
-	// Flags (1 byte)
-	var flags byte
-	if useEncryption {
-		flags |= 0x01
+// CalculateCapacity calculates available embedding capacity for 1..4 LSB (in bytes).
+func (s *stegoService) CalculateCapacity(audioData []byte) (*models.CapacityResult, error) {
+	if len(audioData) == 0 {
+		return nil, models.ErrInvalidMP3
 	}
-	if useRandomStart {
-		flags |= 0x02
+	indices := collectPayloadIndices(audioData)
+	totalPayloadBytes := len(indices)
+	// capacity for n LSB = floor(totalPayloadBytes * n / 8) bytes
+	res := &models.CapacityResult{
+		OneLSB:   (totalPayloadBytes * 1) / 8,
+		TwoLSB:   (totalPayloadBytes * 2) / 8,
+		ThreeLSB: (totalPayloadBytes * 3) / 8,
+		FourLSB:  (totalPayloadBytes * 4) / 8,
 	}
-	metadata[36] = flags
+	return res, nil
+}
 
-	// n-LSB value (1 byte)
-	metadata[37] = byte(nLsb)
+// EmbedMessage embeds secretData (and metadata) into req.CoverAudio using n LSB.
+func (s *stegoService) EmbedMessage(req *models.EmbedRequest, secretData []byte, metadata []byte) ([]byte, float64, error) {
+	// validate n
+	if req.NLsb < 1 || req.NLsb > 4 {
+		return nil, 0, models.ErrInvalidLSB
+	}
+	cover := make([]byte, len(req.CoverAudio))
+	copy(cover, req.CoverAudio)
 
-	log.Printf("[DEBUG] CreateMetadata: Metadata created successfully (size: %d bytes)", len(metadata))
-	return metadata
+	// Optional encryption
+	secretToStore := make([]byte, len(secretData))
+	copy(secretToStore, secretData)
+	if req.UseEncryption {
+		if req.StegoKey == "" {
+			return nil, 0, models.ErrInvalidStegoKey
+		}
+		secretToStore = s.crypto.VigenereCipher(secretToStore, req.StegoKey, true)
+	}
+
+	// Build header+payload:
+	// [magic(8)][nLSB(1)][flags(1)][filenameLen(2)][secretLen(4)][filename][metadataLen(2)][metadata][secret bytes]
+	buf := bytes.Buffer{}
+	buf.Write(magicBytes)
+	buf.WriteByte(byte(req.NLsb))
+	flags := byte(0)
+	if req.UseEncryption {
+		flags |= 1 << 0
+	}
+	if req.UseRandomStart {
+		flags |= 1 << 1
+	}
+	buf.WriteByte(flags)
+
+	// filename
+	filename := req.SecretFileName
+	if filename == "" {
+		filename = "secret.bin"
+	}
+	if len(filename) > 0xFFFF {
+		return nil, 0, models.ErrFileTooLarge
+	}
+	binary.Write(&buf, binary.BigEndian, uint16(len(filename)))
+	binary.Write(&buf, binary.BigEndian, uint32(len(secretToStore)))
+	buf.WriteString(filename)
+
+	// metadata (arbitrary bytes) - allow zero length
+	if metadata == nil {
+		metadata = []byte{}
+	}
+	if len(metadata) > 0xFFFF {
+		return nil, 0, models.ErrFileTooLarge
+	}
+	binary.Write(&buf, binary.BigEndian, uint16(len(metadata)))
+	if len(metadata) > 0 {
+		buf.Write(metadata)
+	}
+
+	// secret bytes
+	buf.Write(secretToStore)
+	toEmbedBytes := buf.Bytes()
+	toEmbedBits := bytesToBits(toEmbedBytes)
+
+	// collect payload positions (byte indices in cover)
+	payloadIdxs := collectPayloadIndices(cover)
+	if len(payloadIdxs) == 0 {
+		return nil, 0, models.ErrInvalidMP3
+	}
+	totalCapacityBits := len(payloadIdxs) * req.NLsb
+	if len(toEmbedBits) > totalCapacityBits {
+		return nil, 0, models.ErrInsufficientCapacity
+	}
+
+	// determine start bit
+	startBit := 0
+	if req.UseRandomStart {
+		if req.StegoKey == "" {
+			return nil, 0, models.ErrInvalidStegoKey
+		}
+		startBit = deterministicStartIndex(req.StegoKey, totalCapacityBits)
+	}
+
+	// embed bits sequentially into LSBs of payload bytes; we map bit index -> payload byte index and LSB slot
+	bitPos := startBit
+	for i := 0; i < len(toEmbedBits); {
+		if bitPos >= totalCapacityBits {
+			// wrap around to beginning (deterministic)
+			bitPos = 0
+		}
+		// find which payload byte and which bit-in-byte slot
+		payloadByteIndex := bitPos / req.NLsb         // which payload byte (index in payloadIdxs)
+		slotIndex := bitPos % req.NLsb                // which LSB slot in that byte (0..n-1)
+		coverBytePos := payloadIdxs[payloadByteIndex] // actual byte index in cover
+		// set or clear that specific LSB slot according to next bit
+		bit := toEmbedBits[i]
+		if bit == 1 {
+			cover[coverBytePos] |= (1 << uint(slotIndex))
+		} else {
+			cover[coverBytePos] &^= (1 << uint(slotIndex))
+		}
+		i++
+		bitPos++
+	}
+
+	// calculate PSNR using audio service
+	psnr := s.audio.CalculatePSNR(req.CoverAudio, cover)
+
+	return cover, psnr, nil
+}
+
+// ExtractMessage extracts embedded data from audioData using n LSB value in request or header inside file.
+// If req.StegoKey is required to decrypt, it will be used.
+func (s *stegoService) ExtractMessage(req *models.ExtractRequest, audioData []byte) ([]byte, string, error) {
+	if len(audioData) == 0 {
+		return nil, "", models.ErrInvalidMP3
+	}
+	cover := audioData
+	payloadIdxs := collectPayloadIndices(cover)
+	if len(payloadIdxs) == 0 {
+		return nil, "", models.ErrInvalidMP3
+	}
+
+	// We don't yet know nLSB; we must extract bits assuming n up to 4? But per spec,
+	// ExtractRequest does not carry n; user said NLsb stored in embed -> we must read first bits to parse header.
+	// So approach: attempt extraction for n = 1..4 by reconstructing bytes from LSB stream and looking for magic.
+	for n := 1; n <= 4; n++ {
+		totalBits := len(payloadIdxs) * n
+		bits := make([]uint8, 0, totalBits)
+		// get linear bit sequence in LSB order (slot 0..n-1 per payload byte) — same order as embed
+		for _, idx := range payloadIdxs {
+			// for slot 0..n-1
+			for slot := 0; slot < n; slot++ {
+				bits = append(bits, (cover[idx]>>uint(slot))&1)
+			}
+		}
+
+		// Try possible random start if embedded with random start - but we don't know whether random start used.
+		// We will try two variants: start=0 and start determined via provided key (if any).
+		tryStarts := []int{0}
+		if req.StegoKey != "" {
+			start := deterministicStartIndex(req.StegoKey, totalBits)
+			tryStarts = append(tryStarts, start)
+		}
+		for _, start := range tryStarts {
+			// rotate bits so that start becomes 0
+			rot := make([]uint8, len(bits))
+			for i := 0; i < len(bits); i++ {
+				rot[i] = bits[(start+i)%len(bits)]
+			}
+			// convert first bytes enough to check magic and header sizes
+			raw := bitsToBytes(rot)
+			// need at least header length: magic(8)+1+1+2+4 = 16 bytes
+			if len(raw) < 16 {
+				continue
+			}
+			if !bytes.Equal(raw[0:8], magicBytes) {
+				continue
+			}
+			embeddedN := int(raw[8])
+			flags := raw[9]
+			// verify embeddedN equals attempted n
+			if embeddedN != n {
+				continue
+			}
+			// read filename len
+			filenameLen := int(binary.BigEndian.Uint16(raw[10:12]))
+			secretLen := int(binary.BigEndian.Uint32(raw[12:16]))
+			// check lengths sanity
+			headerTotal := 8 + 1 + 1 + 2 + 4 + filenameLen + 2 // note: metadataLen (2) exists after filename
+			// need to ensure we extracted enough bytes to read metadataLen too
+			if len(raw) < headerTotal {
+				// insufficient raw, continue
+				continue
+			}
+			filenameStart := 16
+			if filenameLen > 0 {
+				if len(raw) < filenameStart+filenameLen+2 {
+					continue
+				}
+			}
+			filename := string(raw[16 : 16+filenameLen])
+			metaLenOff := 16 + filenameLen
+			metadataLen := int(binary.BigEndian.Uint16(raw[metaLenOff : metaLenOff+2]))
+			metaStart := metaLenOff + 2
+			if len(raw) < metaStart+metadataLen+secretLen {
+				// maybe we didn't extract whole payload yet; but if not enough capacity, skip
+				// However we only need to return the secret if lengths valid
+				// continue to next attempt
+				continue
+			}
+			secretStart := metaStart + metadataLen
+			secretBytes := raw[secretStart : secretStart+secretLen]
+			// If encryption flag set, and key provided, decrypt
+			encFlag := (flags & (1 << 0)) != 0
+			if encFlag {
+				if req.StegoKey == "" {
+					return nil, "", models.ErrInvalidStegoKey
+				}
+				secretBytes = s.crypto.VigenereCipher(secretBytes, req.StegoKey, false)
+			}
+			// success
+			return secretBytes, filename, nil
+		}
+	}
+
+	return nil, "", models.ErrExtractionFailed
 }

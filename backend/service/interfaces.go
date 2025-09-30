@@ -14,9 +14,6 @@ type SteganographyService interface {
 
 	// ExtractMessage extracts a secret message from audio data
 	ExtractMessage(req *models.ExtractRequest, audioData []byte) ([]byte, string, error)
-
-	// CreateMetadata creates metadata for embedding
-	CreateMetadata(filename string, fileSize int, useEncryption, useRandomStart bool, nLsb int) []byte
 }
 
 // CryptographyService defines the interface for cryptographic operations

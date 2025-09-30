@@ -8,39 +8,29 @@ import (
 	"strings"
 )
 
-// bytesToBits converts byte array to bit array
-func bytesToBits(data []byte) []int {
-	bits := make([]int, len(data)*8)
-
-	for i, b := range data {
-		for j := 0; j < 8; j++ {
-			if (b & (1 << (7 - j))) != 0 {
-				bits[i*8+j] = 1
-			} else {
-				bits[i*8+j] = 0
-			}
+// bytesToBits big-endian per byte (MSB first)
+func bytesToBits(data []byte) []uint8 {
+	out := make([]uint8, 0, len(data)*8)
+	for _, b := range data {
+		for i := 7; i >= 0; i-- {
+			out = append(out, (b>>uint(i))&1)
 		}
 	}
-
-	return bits
+	return out
 }
 
-// bitsToBytes converts bit array back to byte array
-func bitsToBytes(bits []int) []byte {
-	// Ensure we have complete bytes
-	byteCount := (len(bits) + 7) / 8
-	data := make([]byte, byteCount)
-
+// bitsToBytes MSB-first
+func bitsToBytes(bits []uint8) []byte {
+	n := (len(bits) + 7) / 8
+	out := make([]byte, n)
 	for i := 0; i < len(bits); i++ {
 		byteIndex := i / 8
-		bitIndex := i % 8
-
+		bitIndex := 7 - (i % 8)
 		if bits[i] == 1 {
-			data[byteIndex] |= (1 << (7 - bitIndex))
+			out[byteIndex] |= (1 << uint(bitIndex))
 		}
 	}
-
-	return data
+	return out
 }
 
 // samplesNeeded returns how many samples are required to embed totalBits using nLsb per sample.

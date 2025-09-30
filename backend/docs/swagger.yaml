@@ -112,112 +112,78 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Embeds a secret file into an audio file (MP3 or WAV) using LSB
-        steganography. If input is WAV, only the data chunk (audio samples) is modified
-        and headers/metadata remain untouched. Output is provided in WAV format to
-        preserve LSB data.
+      description: Embeds a secret file into the provided audio file using n-LSB steganography.
+        Supports optional Vigenère encryption and random embedding start using a stego
+        key. Metadata (filename, format, size, method, flags) is automatically stored
+        inside the stego file.
       parameters:
-      - description: Audio file for embedding (MP3 or WAV, max 100MB)
+      - description: Cover audio file (MP3)
         in: formData
         name: audio
         required: true
         type: file
-      - description: Secret file to embed (max 50MB)
+      - description: Secret file to embed
         in: formData
         name: secret
         required: true
         type: file
-      - description: Number of LSB bits to use for embedding (1-4)
-        enum:
-        - 1
-        - 2
-        - 3
-        - 4
+      - description: Number of LSBs to use (1-4)
         in: formData
         name: lsb
         required: true
         type: integer
-      - description: Whether to encrypt the secret file using Vigenère cipher
-        enum:
-        - "true"
-        - "false"
-        in: formData
-        name: use_encryption
-        type: string
-      - description: Whether to use random starting position for embedding
-        enum:
-        - "true"
-        - "false"
-        in: formData
-        name: use_random_start
-        type: string
-      - description: Steganography key used for encryption and random seed generation
-          (max 25 characters)
+      - description: Key for encryption and/or random start
         in: formData
         name: stego_key
         type: string
-      - description: Desired filename for the output stego audio
+      - description: Enable Vigenère encryption
+        in: formData
+        name: use_encryption
+        type: boolean
+      - description: Enable random start embedding
+        in: formData
+        name: use_random_start
+        type: boolean
+      - description: Output stego audio filename
         in: formData
         name: output_filename
         type: string
       produces:
-      - audio/wav
+      - audio/mpeg
       responses:
         "200":
-          description: Successfully embedded secret data
-          headers:
-            Content-Disposition:
-              description: Filename for the stego audio file
-              type: string
-            X-Embedding-Method:
-              description: LSB method used for embedding
-              type: string
-            X-PSNR-Value:
-              description: Peak Signal-to-Noise Ratio indicating audio quality after
-                embedding
-              type: number
-            X-Processing-Time:
-              description: Time taken to process the request in milliseconds
-              type: int
-            X-Secret-Size:
-              description: Size of embedded secret in bytes
-              type: int
+          description: Stego audio file with embedded secret
           schema:
             type: file
         "400":
-          description: 'Bad Request: Invalid parameters or file issues'
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-        "413":
-          description: Files too large
+          description: Invalid input
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "500":
-          description: Internal Server Error
+          description: Processing error
           schema:
             $ref: '#/definitions/models.ErrorResponse'
-      summary: Embed Secret Data in Audio
+      summary: Embed secret file into audio
       tags:
       - Steganography
   /extract:
     post:
       consumes:
       - multipart/form-data
-      description: Extracts hidden secret data from a stego audio file (MP3 or WAV)
-        with automatic parameter detection. The system automatically detects LSB method,
-        encryption, and random start settings from the embedded metadata.
+      description: Extracts a secret file that was previously embedded in an audio
+        file using n-LSB steganography. Supports optional Vigenère decryption and
+        random start. Automatically restores original filename and metadata.
       parameters:
-      - description: Stego audio file (MP3 or WAV) containing embedded data (max 100MB)
+      - description: Stego audio file (MP3 with embedded data)
         in: formData
         name: stego_audio
         required: true
         type: file
-      - description: Steganography key for decryption (required only if the embedded
-          data was encrypted, max 25 characters)
+      - description: Key for decryption and/or random start
         in: formData
         name: stego_key
         type: string
-      - description: Desired filename for the extracted secret file (optional)
+      - description: Optional output filename override
         in: formData
         name: output_filename
         type: string
@@ -225,35 +191,18 @@ paths:
       - application/octet-stream
       responses:
         "200":
-          description: Successfully extracted secret data
-          headers:
-            Content-Disposition:
-              description: Original filename of the extracted secret
-              type: string
-            X-Extraction-Method:
-              description: Auto-detected LSB method used for extraction
-              type: string
-            X-Processing-Time:
-              description: Time taken to process the request in milliseconds
-              type: int
-            X-Secret-Size:
-              description: Size of extracted secret in bytes
-              type: int
+          description: Extracted secret file
           schema:
             type: file
         "400":
-          description: 'Bad Request: Invalid file format'
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-        "413":
-          description: File too large
+          description: Invalid input
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "500":
-          description: Internal Server Error or extraction failed
+          description: Extraction error
           schema:
             $ref: '#/definitions/models.ErrorResponse'
-      summary: Extract Secret Data from Audio
+      summary: Extract secret file from audio
       tags:
       - Steganography
   /health:

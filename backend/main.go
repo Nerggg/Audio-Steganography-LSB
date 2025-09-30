@@ -55,10 +55,10 @@ func main() {
 
 	// Initialize services with dependency injection
 	log.Println("[DEBUG] Initializing services...")
-	steganographyService := service.NewSteganographyService()
 	cryptographyService := service.NewCryptographyService()
 	audioService := service.NewAudioService()
 	audioEncoder := service.NewAudioEncoder()
+	steganographyService := service.NewStegoService(cryptographyService, audioService)
 	log.Println("[INFO] All services initialized successfully")
 
 	// Initialize handlers with injected services
