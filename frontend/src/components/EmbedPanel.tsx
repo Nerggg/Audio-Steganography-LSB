@@ -309,7 +309,7 @@ const EmbedPanel: React.FC<EmbedPanelProps> = () => {
           <div>
             <label className="text-white font-mono text-sm mb-2 block">N-LSB BITS:</label>
             <div className="flex gap-4">
-              {[1, 2, 4].map((bits) => (
+              {[1, 2, 3, 4].map((bits) => (
                 <label key={bits} className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
