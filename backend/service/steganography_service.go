@@ -69,31 +69,130 @@ func parseID3v2Size(data []byte) int {
 	return 10 + size
 }
 
+// parseMP3FrameSize parses the MP3 frame header at pos and returns the frame size in bytes.
+// Returns 0 if invalid header or insufficient data.
+func parseMP3FrameSize(data []byte, pos int) int {
+	if len(data) < pos+4 {
+		return 0
+	}
+	if data[pos] != 0xFF || (data[pos+1]&0xE0) != 0xE0 {
+		return 0
+	}
+
+	versionBits := (data[pos+1] >> 3) & 0x03
+	if versionBits == 0x01 { // reserved
+		return 0
+	}
+	layerBits := (data[pos+1] >> 1) & 0x03
+	if layerBits == 0x00 { // reserved
+		return 0
+	}
+	bitrateIdx := data[pos+2] >> 4
+	if bitrateIdx == 0x0F || bitrateIdx == 0x00 { // bad or free (we treat free as invalid for simplicity)
+		return 0
+	}
+	sampleRateIdx := (data[pos+2] >> 2) & 0x03
+	if sampleRateIdx == 0x03 { // reserved
+		return 0
+	}
+	padding := (data[pos+2] >> 1) & 0x01
+
+	// Map version: 3=MPEG1, 2=MPEG2, 0=MPEG2.5
+	var vid int
+	if versionBits == 0x03 {
+		vid = 0 // MPEG1
+	} else if versionBits == 0x02 {
+		vid = 1 // MPEG2
+	} else if versionBits == 0x00 {
+		vid = 2 // MPEG2.5
+	} else {
+		return 0
+	}
+
+	// Map layer: 3=Layer1, 2=Layer2, 1=Layer3
+	var lid int
+	if layerBits == 0x03 {
+		lid = 0 // Layer1
+	} else if layerBits == 0x02 {
+		lid = 1 // Layer2
+	} else if layerBits == 0x01 {
+		lid = 2 // Layer3
+	} else {
+		return 0
+	}
+
+	// Bitrate table (kbps): [vid][lid][bitrateIdx]
+	bitrateTable := [3][3][15]int{
+		{ // MPEG1 (vid=0)
+			{32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0}, // Layer1
+			{32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0},     // Layer2
+			{32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0},     // Layer3
+		},
+		{ // MPEG2 (vid=1)
+			{32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0}, // Layer1
+			{8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0},      // Layer2
+			{8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0},      // Layer3
+		},
+		{ // MPEG2.5 (vid=2, same as MPEG2)
+			{32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0}, // Layer1
+			{8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0},      // Layer2
+			{8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0},      // Layer3
+		},
+	}
+	bitrate := bitrateTable[vid][lid][bitrateIdx-1] // idx starts from 1
+	if bitrate == 0 {
+		return 0
+	}
+
+	// Sample rate table: [versionBits][sampleRateIdx]
+	sampleRateTable := [4][3]int{
+		{11025, 12000, 8000}, // MPEG2.5 (0)
+		{0, 0, 0},            // reserved (1)
+		{22050, 24000, 16000}, // MPEG2 (2)
+		{44100, 48000, 32000}, // MPEG1 (3)
+	}
+	sr := sampleRateTable[versionBits][sampleRateIdx]
+	if sr == 0 {
+		return 0
+	}
+
+	// Calculate frame size
+	var frameSize int
+	if layerBits == 0x03 { // Layer1
+		frameSize = ((12 * bitrate * 1000 / sr) + int(padding)) * 4
+	} else { // Layer2/3
+		frameSize = (144 * bitrate * 1000 / sr) + int(padding)
+	}
+
+	if frameSize < 4 || pos+frameSize > len(data) {
+		return 0
+	}
+	return frameSize
+}
+
 // collectPayloadIndices returns a slice of indices of bytes that are considered "payload bytes"
-// i.e., bytes between frame header (4 bytes header assumed) and next sync. This is a *best-effort* approach.
+// i.e., bytes between frame header and end of frame. This uses proper frame size calculation for robustness.
 func collectPayloadIndices(data []byte) []int {
 	var indices []int
 	// start after ID3 tag
 	start := parseID3v2Size(data)
 	i := start
-	for i < len(data)-1 {
-		if isFrameSyncAt(data, i) {
-			// approximate header size: 4 bytes
-			payloadStart := i + 4
-			j := payloadStart
-			// find next sync
-			for j < len(data)-1 {
-				if isFrameSyncAt(data, j) {
-					break
-				}
-				indices = append(indices, j)
-				j++
-			}
-			// continue scanning from j (next sync)
-			i = j
-		} else {
+	for i < len(data)-4 { // need at least header size
+		if !isFrameSyncAt(data, i) {
 			i++
+			continue
 		}
+		size := parseMP3FrameSize(data, i)
+		if size <= 4 {
+			i++
+			continue
+		}
+		// add payload bytes: from i+4 to i+size-1
+		for j := i + 4; j < i+size && j < len(data); j++ {
+			indices = append(indices, j)
+		}
+		// jump to next frame
+		i += size
 	}
 	return indices
 }
