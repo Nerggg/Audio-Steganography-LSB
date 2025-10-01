@@ -1,9 +1,10 @@
 package models
 
 type ExtractRequest struct {
-	StegoAudio     []byte `json:"stego_audio"`
-	StegoKey       string `json:"stego_key,omitempty"`
-	OutputFilename string `json:"output_filename,omitempty"`
+	StegoAudio     []byte              `json:"stego_audio"`
+	StegoKey       string              `json:"stego_key,omitempty"`
+	Method         SteganographyMethod `json:"method,omitempty"` // Optional: auto-detect if not provided
+	OutputFilename string              `json:"output_filename,omitempty"`
 }
 
 type ExtractResponse struct {

@@ -14,6 +14,41 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioUrl, label, className = 
   const [volume, setVolume] = useState(1)
 
   useEffect(() => {
+    // Add custom styles for range sliders
+    const style = document.createElement('style')
+    style.textContent = `
+      .audio-player input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 12px;
+        width: 12px;
+        border-radius: 50%;
+        background: #ffffff;
+        cursor: pointer;
+        border: 2px solid #22d3ee;
+        box-shadow: 0 0 4px rgba(34, 211, 238, 0.5);
+      }
+      
+      .audio-player input[type="range"]::-moz-range-thumb {
+        height: 12px;
+        width: 12px;
+        border-radius: 50%;
+        background: #ffffff;
+        cursor: pointer;
+        border: 2px solid #22d3ee;
+        box-shadow: 0 0 4px rgba(34, 211, 238, 0.5);
+        -moz-appearance: none;
+        appearance: none;
+      }
+    `
+    document.head.appendChild(style)
+
+    return () => {
+      document.head.removeChild(style)
+    }
+  }, [])
+
+  useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
 
@@ -76,7 +111,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioUrl, label, className = 
   }
 
   return (
-    <div className={`border border-cyan-400/50 rounded-lg p-4 bg-black/30 backdrop-blur-sm ${className}`}>
+    <div className={`audio-player border border-cyan-400/50 rounded-lg p-4 bg-black/30 backdrop-blur-sm ${className}`}>
       <audio ref={audioRef} src={audioUrl} />
 
       {/* Label */}
@@ -105,33 +140,41 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioUrl, label, className = 
         {/* Volume control */}
         <div className="flex items-center gap-2 ml-auto">
           <span className="text-cyan-400 text-sm">🔊</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={volume * 100}
-            onChange={handleVolumeChange}
-            className="w-20 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
-          />
+          <div className="relative w-20">
+            <div className="w-full h-1 bg-gray-700 rounded-lg overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-400 to-pink-500 transition-all duration-100"
+                style={{ width: `${volume * 100}%` }}
+              ></div>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={volume * 100}
+              onChange={handleVolumeChange}
+              className="absolute top-0 left-0 w-full h-1 bg-transparent appearance-none cursor-pointer"
+            />
+          </div>
         </div>
       </div>
 
       {/* Progress bar */}
       <div className="relative">
+        <div className="w-full h-2 bg-gray-700 rounded-lg overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-pink-500 to-cyan-400 transition-all duration-100"
+            style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+          ></div>
+        </div>
         <input
           type="range"
           min="0"
           max="100"
           value={duration ? (currentTime / duration) * 100 : 0}
           onChange={handleSeek}
-          className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+          className="absolute top-0 left-0 w-full h-2 bg-transparent appearance-none cursor-pointer"
         />
-        <div className="absolute inset-0 pointer-events-none">
-          <div
-            className="h-2 bg-gradient-to-r from-pink-500 to-cyan-400 rounded-lg transition-all duration-100"
-            style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-          ></div>
-        </div>
       </div>
 
       {/* Waveform visualization placeholder */}

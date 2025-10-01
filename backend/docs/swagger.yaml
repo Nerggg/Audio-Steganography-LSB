@@ -42,12 +42,16 @@ definitions:
   models.CapacityResult:
     properties:
       1_lsb:
+        description: LSB method capacities
         type: integer
       2_lsb:
         type: integer
       3_lsb:
         type: integer
       4_lsb:
+        type: integer
+      parity:
+        description: Parity coding capacity (1 bit per byte)
         type: integer
     type: object
   models.ErrorDetail:
@@ -73,8 +77,9 @@ paths:
       consumes:
       - multipart/form-data
       description: Calculates the maximum size of a secret file (in bytes) that can
-        be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB
-        method. The capacity is returned for 1, 2, 3, and 4 LSBs.
+        be embedded into an uploaded audio file (MP3 or WAV) using different steganography
+        methods. The capacity is returned for LSB methods (1-4 LSBs) and Parity method
+        (1 bit per byte).
       parameters:
       - description: Audio file (MP3 or WAV) to calculate capacity for.
         in: formData
@@ -112,10 +117,11 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Embeds a secret file into the provided audio file using n-LSB steganography.
-        Supports optional Vigenère encryption and random embedding start using a stego
-        key. Metadata (filename, format, size, method, flags) is automatically stored
-        inside the stego file.
+      description: Embeds a secret file into the provided audio file using LSB or
+        Parity steganography method. LSB method supports 1-4 LSBs, while Parity method
+        uses 1 bit per byte. Supports optional Vigenère encryption and random embedding
+        start using a stego key. Metadata (filename, format, size, method, flags)
+        is automatically stored inside the stego file.
       parameters:
       - description: Cover audio file (MP3)
         in: formData
@@ -127,10 +133,14 @@ paths:
         name: secret
         required: true
         type: file
-      - description: Number of LSBs to use (1-4)
+      - description: 'Steganography method: ''lsb'' or ''parity'''
+        in: formData
+        name: method
+        required: true
+        type: string
+      - description: Number of LSBs to use (1-4), required only for LSB method
         in: formData
         name: lsb
-        required: true
         type: integer
       - description: Key for encryption and/or random start
         in: formData
@@ -171,14 +181,20 @@ paths:
       consumes:
       - multipart/form-data
       description: Extracts a secret file that was previously embedded in an audio
-        file using n-LSB steganography. Supports optional Vigenère decryption and
-        random start. Automatically restores original filename and metadata.
+        file using LSB or Parity steganography. Auto-detects the method used during
+        embedding. Supports optional Vigenère decryption and random start. Automatically
+        restores original filename and metadata.
       parameters:
       - description: Stego audio file (MP3 with embedded data)
         in: formData
         name: stego_audio
         required: true
         type: file
+      - description: 'Optional: specify method (''lsb'' or ''parity'') to speed up
+          extraction'
+        in: formData
+        name: method
+        type: string
       - description: Key for decryption and/or random start
         in: formData
         name: stego_key

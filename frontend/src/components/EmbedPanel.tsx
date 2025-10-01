@@ -5,8 +5,9 @@ import { useState, useEffect } from "react"
 import FileUpload from "./FileUpload"
 import AudioPlayer from "./AudioPlayer"
 import Button from "./Button"
-import type { UploadedFile, EmbedOptions, EmbedResult, AppStatus } from "../types"
+import type { UploadedFile, EmbedOptions, EmbedResult, AppStatus, CapacityInfo } from "../types"
 import StatusDisplay from "./StatusDisplay"
+import { STEGANOGRAPHY_METHODS, DEFAULT_EMBED_OPTIONS, getCapacityForMethod, formatCapacity } from "../utils/steganography"
 
 interface EmbedPanelProps {}
 
@@ -14,12 +15,7 @@ const EmbedPanel: React.FC<EmbedPanelProps> = () => {
   const [coverAudio, setCoverAudio] = useState<UploadedFile | undefined>()
   const [stegoAudio, setStegoAudio] = useState<UploadedFile | undefined>()
   const [secretFile, setSecretFile] = useState<UploadedFile | undefined>()
-  const [options, setOptions] = useState<EmbedOptions>({
-    stegKey: "",
-    nLSB: 1,
-    encrypt: false,
-    randomStart: false,
-  })
+  const [options, setOptions] = useState<EmbedOptions>(DEFAULT_EMBED_OPTIONS)
   const [isEmbedding, setIsEmbedding] = useState(false)
 
   const API_URL = "http://localhost:8080"
@@ -115,7 +111,10 @@ const EmbedPanel: React.FC<EmbedPanelProps> = () => {
       const formData = new FormData()
       formData.append("audio", coverAudio.file)
       formData.append("secret", secretFile.file)
-      formData.append("lsb", options.nLSB.toString())
+      formData.append("method", options.method)
+      if (options.method === 'lsb') {
+        formData.append("lsb", options.nLSB.toString())
+      }
       formData.append("use_encryption", options.encrypt.toString())
       formData.append("use_random_start", options.randomStart.toString())
       if (options.stegKey) {
@@ -193,27 +192,42 @@ const EmbedPanel: React.FC<EmbedPanelProps> = () => {
   // Check capacity sufficiency when relevant states change
   useEffect(() => {
     if (coverAudio && secretFile && Object.keys(capacities).length > 0) {
-      const selectedCapacity = capacities[`${options.nLSB}_lsb`] || 0
+      const selectedCapacity = getCapacityForMethod(capacities, options.method, options.nLSB)
+      const methodName = STEGANOGRAPHY_METHODS[options.method].name
+      
       if (secretFile.size > selectedCapacity) {
         handleStatusUpdate({
           isLoading: false,
-          message: `Secret file too large for selected LSB configuration. Max capacity: ${selectedCapacity} bytes`,
+          message: `Secret file too large for ${methodName}. Max capacity: ${formatCapacity(selectedCapacity)}`,
           type: "error",
         })
       } else {
         handleStatusUpdate({
           isLoading: false,
-          message: "Capacity sufficient for embedding",
+          message: `Capacity sufficient for embedding with ${methodName}`,
           type: "success",
         })
       }
     }
-  }, [coverAudio, secretFile, options.nLSB, capacities])
+  }, [coverAudio, secretFile, options.method, options.nLSB, capacities])
 
   const isCapacitySufficient = () => {
     if (!secretFile || Object.keys(capacities).length === 0) return true
-    const selectedCapacity = capacities[`${options.nLSB}_lsb`] || 0
+    const selectedCapacity = getCapacityForMethod(capacities, options.method, options.nLSB)
     return secretFile.size <= selectedCapacity
+  }
+
+  const getCapacityInfo = (): CapacityInfo | undefined => {
+    if (!secretFile || Object.keys(capacities).length === 0) return undefined
+    
+    return {
+      audioCapacity: capacities as any,
+      selectedMethod: options.method,
+      selectedLSB: options.method === 'lsb' ? options.nLSB : undefined,
+      isCapacitySufficient: isCapacitySufficient(),
+      requiredBytes: secretFile.size,
+      availableBytes: getCapacityForMethod(capacities, options.method, options.nLSB)
+    }
   }
 
   const isEmbedReady = coverAudio && secretFile && (options.encrypt || options.randomStart ? options.stegKey.trim() : true) && isCapacitySufficient()
@@ -298,16 +312,71 @@ const EmbedPanel: React.FC<EmbedPanelProps> = () => {
         )}
       </div>
 
-      {/* LSB Options */}
+      {/* Method Selection */}
       <div className="border border-green-400/50 rounded-lg p-6 bg-green-900/10 backdrop-blur-sm">
         <div className="text-green-400 font-mono text-sm mb-4 flex items-center gap-2">
           <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-          LSB CONFIGURATION
+          STEGANOGRAPHY METHOD
         </div>
 
-        <div className="space-y-3">
-          <div>
-            <label className="text-white font-mono text-sm mb-2 block">N-LSB BITS:</label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {Object.values(STEGANOGRAPHY_METHODS).map((method) => (
+            <div
+              key={method.id}
+              className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                options.method === method.id
+                  ? 'border-green-400 bg-green-400/10'
+                  : 'border-green-400/30 bg-black/30 hover:border-green-400/50'
+              }`}
+              onClick={() => setOptions({ ...options, method: method.id })}
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <input
+                  type="radio"
+                  name="method"
+                  value={method.id}
+                  checked={options.method === method.id}
+                  onChange={() => {}} // Handled by parent div onClick
+                  className="w-4 h-4 text-green-400 bg-black border-green-400 focus:ring-green-400 focus:ring-2"
+                />
+                <span className="text-white font-mono font-bold">{method.name}</span>
+                <div className="flex gap-1">
+                  <span className={`px-2 py-0.5 text-xs rounded ${
+                    method.capacity === 'high' ? 'bg-green-500/20 text-green-400' :
+                    method.capacity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                    'bg-red-500/20 text-red-400'
+                  }`}>
+                    {method.capacity} capacity
+                  </span>
+                  <span className={`px-2 py-0.5 text-xs rounded ${
+                    method.robustness === 'high' ? 'bg-green-500/20 text-green-400' :
+                    method.robustness === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                    'bg-red-500/20 text-red-400'
+                  }`}>
+                    {method.robustness} robustness
+                  </span>
+                </div>
+              </div>
+              <p className="text-gray-300 text-sm mb-3">{method.description}</p>
+              
+              <div className="space-y-2">
+                <div>
+                  <p className="text-green-300 text-xs font-semibold mb-1">Advantages:</p>
+                  <ul className="text-xs text-gray-400 space-y-0.5">
+                    {method.advantages.slice(0, 2).map((advantage, idx) => (
+                      <li key={idx}>• {advantage}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* LSB Configuration (only show for LSB method) */}
+        {options.method === 'lsb' && (
+          <div className="border border-green-400/30 rounded-lg p-4 bg-black/20">
+            <label className="text-white font-mono text-sm mb-3 block">LSB BITS CONFIGURATION:</label>
             <div className="flex gap-4">
               {[1, 2, 3, 4].map((bits) => (
                 <label key={bits} className="flex items-center gap-2 cursor-pointer">
@@ -316,18 +385,40 @@ const EmbedPanel: React.FC<EmbedPanelProps> = () => {
                     name="nLSB"
                     value={bits}
                     checked={options.nLSB === bits}
-                    onChange={(e) => setOptions({ ...options, nLSB: Number.parseInt(e.target.value) as 1 | 2 | 4 })}
+                    onChange={(e) => setOptions({ ...options, nLSB: Number.parseInt(e.target.value) as 1 | 2 | 3 | 4 })}
                     className="w-4 h-4 text-green-400 bg-black border-green-400 focus:ring-green-400 focus:ring-2"
                   />
                   <span className="text-white font-mono">{bits}</span>
                 </label>
               ))}
             </div>
+            <p className="text-gray-400 text-xs mt-2">
+              Higher values = more capacity but potentially lower audio quality
+            </p>
           </div>
-        </div>
+        )}
+
+        {/* Method-specific capacity info */}
+        {secretFile && Object.keys(capacities).length > 0 && (
+          <div className="mt-4 p-3 bg-black/40 border border-green-400/20 rounded">
+            <div className="text-green-400 text-xs font-mono mb-2">CAPACITY ANALYSIS</div>
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <span className="text-gray-400">Required:</span>
+                <span className="text-white ml-2">{formatCapacity(secretFile.size)}</span>
+              </div>
+              <div>
+                <span className="text-gray-400">Available:</span>
+                <span className={`ml-2 ${isCapacitySufficient() ? 'text-green-400' : 'text-red-400'}`}>
+                  {formatCapacity(getCapacityForMethod(capacities, options.method, options.nLSB))}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      <StatusDisplay status={status} psnr={psnr} />
+      <StatusDisplay status={status} capacityInfo={getCapacityInfo()} psnr={psnr} />
 
       {/* Embed Button */}
       <div className="flex justify-center">

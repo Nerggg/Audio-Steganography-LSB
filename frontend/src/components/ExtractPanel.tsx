@@ -5,16 +5,15 @@ import { useState } from "react"
 import FileUpload from "./FileUpload"
 import AudioPlayer from "./AudioPlayer"
 import Button from "./Button"
-import type { UploadedFile, ExtractOptions, ExtractResult, AppStatus } from "../types"
+import type { UploadedFile, ExtractOptions, ExtractResult, AppStatus, SteganographyMethod } from "../types"
 import StatusDisplay from "./StatusDisplay"
+import { STEGANOGRAPHY_METHODS, DEFAULT_EXTRACT_OPTIONS } from "../utils/steganography"
 
 interface ExtractPanelProps {}
 
 const ExtractPanel: React.FC<ExtractPanelProps> = () => {
   const [stegoAudio, setStegoAudio] = useState<UploadedFile | undefined>()
-  const [options, setOptions] = useState<ExtractOptions>({
-    stegKey: "",
-  })
+  const [options, setOptions] = useState<ExtractOptions>(DEFAULT_EXTRACT_OPTIONS)
   const [isExtracting, setIsExtracting] = useState(false)
   const [extractedFileInfo, setExtractedFileInfo] = useState<{
     filename: string
@@ -73,6 +72,9 @@ const ExtractPanel: React.FC<ExtractPanelProps> = () => {
       if (options.stegKey) {
         formData.append("stego_key", options.stegKey)
       }
+      if (options.method) {
+        formData.append("method", options.method)
+      }
 
       const response = await fetch(`${API_URL}/api/v1/extract`, {
         method: "POST",
@@ -126,6 +128,49 @@ const ExtractPanel: React.FC<ExtractPanelProps> = () => {
           label="STEGANOGRAPHIC AUDIO FILE"
           currentFile={stegoAudio}
         />
+      </div>
+
+      {/* Method Selection (Optional) */}
+      <div className="border border-blue-400/50 rounded-lg p-6 bg-blue-900/10 backdrop-blur-sm">
+        <div className="text-blue-400 font-mono text-sm mb-4 flex items-center gap-2">
+          <span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+          EXTRACTION METHOD (OPTIONAL)
+        </div>
+
+        <div className="space-y-3">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="radio"
+              name="extractMethod"
+              value=""
+              checked={!options.method}
+              onChange={() => setOptions({ ...options, method: undefined })}
+              className="w-4 h-4 text-blue-400 bg-black border-blue-400 focus:ring-blue-400 focus:ring-2"
+            />
+            <span className="text-white font-mono">AUTO-DETECT</span>
+            <span className="text-gray-400 text-sm">(Slower but tries both methods)</span>
+          </label>
+
+          {Object.values(STEGANOGRAPHY_METHODS).map((method) => (
+            <label key={method.id} className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="extractMethod"
+                value={method.id}
+                checked={options.method === method.id}
+                onChange={(e) => setOptions({ ...options, method: e.target.value as SteganographyMethod })}
+                className="w-4 h-4 text-blue-400 bg-black border-blue-400 focus:ring-blue-400 focus:ring-2"
+              />
+              <span className="text-white font-mono">{method.name.toUpperCase()}</span>
+              <span className="text-gray-400 text-sm">(Faster extraction)</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="mt-3 p-3 bg-black/20 border border-blue-400/20 rounded text-xs text-gray-400">
+          💡 If you know which method was used for embedding, selecting it will speed up extraction.
+          Otherwise, leave on AUTO-DETECT.
+        </div>
       </div>
 
       {/* Optional Stego Key */}

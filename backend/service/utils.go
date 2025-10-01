@@ -328,3 +328,37 @@ func isLikelyText(data []byte) bool {
 	// If more than 80% of the sample are text characters, consider it text
 	return float64(textChars)/float64(sampleSize) > 0.8
 }
+
+// calculateParity calculates the parity (even/odd) of a byte
+func calculateParity(b byte) uint8 {
+	parity := uint8(0)
+	for i := 0; i < 8; i++ {
+		parity ^= (b >> i) & 1
+	}
+	return parity
+}
+
+// embedParityBit embeds a single bit into a byte by adjusting its parity
+// If the current parity doesn't match the bit to embed, flip the LSB
+func embedParityBit(originalByte byte, bitToEmbed uint8) byte {
+	currentParity := calculateParity(originalByte)
+	if currentParity != bitToEmbed {
+		// Flip the LSB to change parity
+		return originalByte ^ 1
+	}
+	return originalByte
+}
+
+// extractParityBit extracts a bit from a byte based on its parity
+func extractParityBit(b byte) uint8 {
+	return calculateParity(b)
+}
+
+// calculateChecksum calculates a simple 4-byte checksum for data integrity verification
+func calculateChecksum(data []byte) [4]byte {
+	var checksum [4]byte
+	for i, b := range data {
+		checksum[i%4] ^= b
+	}
+	return checksum
+}

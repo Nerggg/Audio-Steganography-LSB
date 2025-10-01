@@ -21,8 +21,9 @@ func NewStegoService(crypto CryptographyService, audio AudioService) Steganograp
 
 /*
  Format header (binary, fixed order):
- - 8 bytes magic: "ASTEGv1\000" (8 bytes)
- - 1 byte nLSB (1..4)
+ - 8 bytes magic: "ASTEGv2\000" (8 bytes) - v2 to support multiple methods
+ - 1 byte method: 0=LSB, 1=Parity
+ - 1 byte nLSB (1..4, only used for LSB method)
  - 1 byte flags: bit0 = UseEncryption, bit1 = UseRandomStart
  - 2 bytes filename length (uint16 big endian)
  - 4 bytes secret payload length (uint32 big endian)  <-- length AFTER encryption (i.e. stored)
@@ -32,7 +33,13 @@ func NewStegoService(crypto CryptographyService, audio AudioService) Steganograp
 
 // helper constants
 var (
-	magicBytes = []byte("ASTEGv1\x00")
+	magicBytes = []byte("ASTEGv2\x00")
+)
+
+// method constants
+const (
+	methodLSB    = 0
+	methodParity = 1
 )
 
 // ------------------ Helpers ------------------
@@ -125,7 +132,7 @@ func parseMP3FrameSize(data []byte, pos int) int {
 	bitrateTable := [3][3][15]int{
 		{ // MPEG1 (vid=0)
 			{32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0}, // Layer1
-			{32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0},     // Layer2
+			{32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0},    // Layer2
 			{32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0},     // Layer3
 		},
 		{ // MPEG2 (vid=1)
@@ -146,8 +153,8 @@ func parseMP3FrameSize(data []byte, pos int) int {
 
 	// Sample rate table: [versionBits][sampleRateIdx]
 	sampleRateTable := [4][3]int{
-		{11025, 12000, 8000}, // MPEG2.5 (0)
-		{0, 0, 0},            // reserved (1)
+		{11025, 12000, 8000},  // MPEG2.5 (0)
+		{0, 0, 0},             // reserved (1)
 		{22050, 24000, 16000}, // MPEG2 (2)
 		{44100, 48000, 32000}, // MPEG1 (3)
 	}
@@ -210,29 +217,40 @@ func deterministicStartIndex(key string, capacityBits int) int {
 
 // ------------------ Interface Implementations ------------------
 
-// CalculateCapacity calculates available embedding capacity for 1..4 LSB (in bytes).
+// CalculateCapacity calculates available embedding capacity for both LSB and Parity methods (in bytes).
 func (s *stegoService) CalculateCapacity(audioData []byte) (*models.CapacityResult, error) {
 	if len(audioData) == 0 {
 		return nil, models.ErrInvalidMP3
 	}
 	indices := collectPayloadIndices(audioData)
+	if len(indices) == 0 {
+		return nil, models.ErrInvalidMP3
+	}
 	totalPayloadBytes := len(indices)
 	// capacity for n LSB = floor(totalPayloadBytes * n / 8) bytes
+	// capacity for parity = floor(totalPayloadBytes / 8) bytes (1 bit per byte)
 	res := &models.CapacityResult{
 		OneLSB:   (totalPayloadBytes * 1) / 8,
 		TwoLSB:   (totalPayloadBytes * 2) / 8,
 		ThreeLSB: (totalPayloadBytes * 3) / 8,
 		FourLSB:  (totalPayloadBytes * 4) / 8,
+		Parity:   totalPayloadBytes / 8, // 1 bit per byte
 	}
 	return res, nil
 }
 
-// EmbedMessage embeds secretData (and metadata) into req.CoverAudio using n LSB.
+// EmbedMessage embeds secretData (and metadata) into req.CoverAudio using LSB or Parity method.
 func (s *stegoService) EmbedMessage(req *models.EmbedRequest, secretData []byte, metadata []byte) ([]byte, float64, error) {
-	// validate n
-	if req.NLsb < 1 || req.NLsb > 4 {
+	// validate method
+	if !req.Method.IsValid() {
+		return nil, 0, models.ErrInvalidMethod
+	}
+
+	// validate LSB count for LSB method
+	if req.Method == models.MethodLSB && (req.NLsb < 1 || req.NLsb > 4) {
 		return nil, 0, models.ErrInvalidLSB
 	}
+
 	cover := make([]byte, len(req.CoverAudio))
 	copy(cover, req.CoverAudio)
 
@@ -243,14 +261,31 @@ func (s *stegoService) EmbedMessage(req *models.EmbedRequest, secretData []byte,
 		if req.StegoKey == "" {
 			return nil, 0, models.ErrInvalidStegoKey
 		}
-		secretToStore = s.crypto.VigenereCipher(secretToStore, req.StegoKey, true)
+		// Add a simple checksum (first 4 bytes of data hash) before encryption for integrity verification
+		checksum := calculateChecksum(secretData)
+		dataWithChecksum := append(checksum[:], secretData...)
+		secretToStore = s.crypto.VigenereCipher(dataWithChecksum, req.StegoKey, true)
 	}
 
 	// Build header+payload:
-	// [magic(8)][nLSB(1)][flags(1)][filenameLen(2)][secretLen(4)][filename][metadataLen(2)][metadata][secret bytes]
+	// [magic(8)][method(1)][nLSB(1)][flags(1)][filenameLen(2)][secretLen(4)][filename][metadataLen(2)][metadata][secret bytes]
 	buf := bytes.Buffer{}
 	buf.Write(magicBytes)
-	buf.WriteByte(byte(req.NLsb))
+
+	// Write method type
+	if req.Method == models.MethodLSB {
+		buf.WriteByte(methodLSB)
+	} else {
+		buf.WriteByte(methodParity)
+	}
+
+	// Write nLSB (only meaningful for LSB method, but always present for format consistency)
+	nLsb := req.NLsb
+	if req.Method == models.MethodParity {
+		nLsb = 1 // Parity method uses 1 bit per byte
+	}
+	buf.WriteByte(byte(nLsb))
+
 	flags := byte(0)
 	if req.UseEncryption {
 		flags |= 1 << 0
@@ -294,7 +329,15 @@ func (s *stegoService) EmbedMessage(req *models.EmbedRequest, secretData []byte,
 	if len(payloadIdxs) == 0 {
 		return nil, 0, models.ErrInvalidMP3
 	}
-	totalCapacityBits := len(payloadIdxs) * req.NLsb
+
+	// Calculate capacity based on method
+	var totalCapacityBits int
+	if req.Method == models.MethodLSB {
+		totalCapacityBits = len(payloadIdxs) * req.NLsb
+	} else { // Parity method
+		totalCapacityBits = len(payloadIdxs) // 1 bit per byte
+	}
+
 	if len(toEmbedBits) > totalCapacityBits {
 		return nil, 0, models.ErrInsufficientCapacity
 	}
@@ -308,26 +351,43 @@ func (s *stegoService) EmbedMessage(req *models.EmbedRequest, secretData []byte,
 		startBit = deterministicStartIndex(req.StegoKey, totalCapacityBits)
 	}
 
-	// embed bits sequentially into LSBs of payload bytes; we map bit index -> payload byte index and LSB slot
-	bitPos := startBit
-	for i := 0; i < len(toEmbedBits); {
-		if bitPos >= totalCapacityBits {
-			// wrap around to beginning (deterministic)
-			bitPos = 0
+	// Embed bits using the selected method
+	if req.Method == models.MethodLSB {
+		// LSB embedding - embed bits sequentially into LSBs of payload bytes
+		bitPos := startBit
+		for i := 0; i < len(toEmbedBits); {
+			if bitPos >= totalCapacityBits {
+				// wrap around to beginning (deterministic)
+				bitPos = 0
+			}
+			// find which payload byte and which bit-in-byte slot
+			payloadByteIndex := bitPos / req.NLsb         // which payload byte (index in payloadIdxs)
+			slotIndex := bitPos % req.NLsb                // which LSB slot in that byte (0..n-1)
+			coverBytePos := payloadIdxs[payloadByteIndex] // actual byte index in cover
+			// set or clear that specific LSB slot according to next bit
+			bit := toEmbedBits[i]
+			if bit == 1 {
+				cover[coverBytePos] |= (1 << uint(slotIndex))
+			} else {
+				cover[coverBytePos] &^= (1 << uint(slotIndex))
+			}
+			i++
+			bitPos++
 		}
-		// find which payload byte and which bit-in-byte slot
-		payloadByteIndex := bitPos / req.NLsb         // which payload byte (index in payloadIdxs)
-		slotIndex := bitPos % req.NLsb                // which LSB slot in that byte (0..n-1)
-		coverBytePos := payloadIdxs[payloadByteIndex] // actual byte index in cover
-		// set or clear that specific LSB slot according to next bit
-		bit := toEmbedBits[i]
-		if bit == 1 {
-			cover[coverBytePos] |= (1 << uint(slotIndex))
-		} else {
-			cover[coverBytePos] &^= (1 << uint(slotIndex))
+	} else { // Parity method
+		// Parity embedding - embed bits by adjusting parity of payload bytes
+		bitPos := startBit
+		for i := 0; i < len(toEmbedBits); {
+			if bitPos >= totalCapacityBits {
+				// wrap around to beginning (deterministic)
+				bitPos = 0
+			}
+			coverBytePos := payloadIdxs[bitPos] // direct mapping: bit index to payload byte
+			bit := toEmbedBits[i]
+			cover[coverBytePos] = embedParityBit(cover[coverBytePos], bit)
+			i++
+			bitPos++
 		}
-		i++
-		bitPos++
 	}
 
 	// calculate PSNR using audio service
@@ -336,7 +396,7 @@ func (s *stegoService) EmbedMessage(req *models.EmbedRequest, secretData []byte,
 	return cover, psnr, nil
 }
 
-// ExtractMessage extracts embedded data from audioData using n LSB value in request or header inside file.
+// ExtractMessage extracts embedded data from audioData using method and parameters stored in header.
 // If req.StegoKey is required to decrypt, it will be used.
 func (s *stegoService) ExtractMessage(req *models.ExtractRequest, audioData []byte) ([]byte, string, error) {
 	if len(audioData) == 0 {
@@ -348,87 +408,159 @@ func (s *stegoService) ExtractMessage(req *models.ExtractRequest, audioData []by
 		return nil, "", models.ErrInvalidMP3
 	}
 
-	// We don't yet know nLSB; we must extract bits assuming n up to 4? But per spec,
-	// ExtractRequest does not carry n; user said NLsb stored in embed -> we must read first bits to parse header.
-	// So approach: attempt extraction for n = 1..4 by reconstructing bytes from LSB stream and looking for magic.
+	// Try both methods if not specified, or use specified method
+	methodsToTry := []int{methodLSB, methodParity}
+	if req.Method.IsValid() {
+		if req.Method == models.MethodLSB {
+			methodsToTry = []int{methodLSB}
+		} else {
+			methodsToTry = []int{methodParity}
+		}
+	}
+
+	for _, method := range methodsToTry {
+		var result []byte
+		var filename string
+		var err error
+
+		if method == methodLSB {
+			result, filename, err = s.extractLSBMethod(req, cover, payloadIdxs)
+		} else {
+			result, filename, err = s.extractParityMethod(req, cover, payloadIdxs)
+		}
+
+		if err == nil && result != nil {
+			return result, filename, nil
+		}
+	}
+
+	return nil, "", models.ErrExtractionFailed
+}
+
+// extractLSBMethod extracts data using LSB method (tries different n values)
+func (s *stegoService) extractLSBMethod(req *models.ExtractRequest, cover []byte, payloadIdxs []int) ([]byte, string, error) {
+	// Try n = 1..4 LSBs since we don't know which was used
 	for n := 1; n <= 4; n++ {
 		totalBits := len(payloadIdxs) * n
 		bits := make([]uint8, 0, totalBits)
-		// get linear bit sequence in LSB order (slot 0..n-1 per payload byte) — same order as embed
+		// get linear bit sequence in LSB order (slot 0..n-1 per payload byte)
 		for _, idx := range payloadIdxs {
-			// for slot 0..n-1
 			for slot := 0; slot < n; slot++ {
 				bits = append(bits, (cover[idx]>>uint(slot))&1)
 			}
 		}
 
-		// Try possible random start if embedded with random start - but we don't know whether random start used.
-		// We will try two variants: start=0 and start determined via provided key (if any).
-		tryStarts := []int{0}
-		if req.StegoKey != "" {
-			start := deterministicStartIndex(req.StegoKey, totalBits)
-			tryStarts = append(tryStarts, start)
+		result, filename, err := s.tryExtractFromBits(req, bits, totalBits, methodLSB, n)
+		if err == nil {
+			return result, filename, nil
 		}
-		for _, start := range tryStarts {
-			// rotate bits so that start becomes 0
-			rot := make([]uint8, len(bits))
-			for i := 0; i < len(bits); i++ {
-				rot[i] = bits[(start+i)%len(bits)]
-			}
-			// convert first bytes enough to check magic and header sizes
-			raw := bitsToBytes(rot)
-			// need at least header length: magic(8)+1+1+2+4 = 16 bytes
-			if len(raw) < 16 {
+	}
+	return nil, "", models.ErrExtractionFailed
+}
+
+// extractParityMethod extracts data using Parity method
+func (s *stegoService) extractParityMethod(req *models.ExtractRequest, cover []byte, payloadIdxs []int) ([]byte, string, error) {
+	totalBits := len(payloadIdxs) // 1 bit per byte for parity
+	bits := make([]uint8, 0, totalBits)
+
+	// Extract parity bits from each payload byte
+	for _, idx := range payloadIdxs {
+		bit := extractParityBit(cover[idx])
+		bits = append(bits, bit)
+	}
+
+	return s.tryExtractFromBits(req, bits, totalBits, methodParity, 1)
+}
+
+// tryExtractFromBits attempts to extract data from a bit stream
+func (s *stegoService) tryExtractFromBits(req *models.ExtractRequest, bits []uint8, totalBits int, expectedMethod int, expectedN int) ([]byte, string, error) {
+	// Try possible random start positions
+	tryStarts := []int{0}
+	if req.StegoKey != "" {
+		start := deterministicStartIndex(req.StegoKey, totalBits)
+		tryStarts = append(tryStarts, start)
+	}
+
+	for _, start := range tryStarts {
+		// rotate bits so that start becomes 0
+		rot := make([]uint8, len(bits))
+		for i := 0; i < len(bits); i++ {
+			rot[i] = bits[(start+i)%len(bits)]
+		}
+		// convert first bytes enough to check magic and header sizes
+		raw := bitsToBytes(rot)
+		// need at least header length: magic(8)+method(1)+nLSB(1)+flags(1)+filenameLen(2)+secretLen(4) = 17 bytes
+		if len(raw) < 17 {
+			continue
+		}
+		if !bytes.Equal(raw[0:8], magicBytes) {
+			continue
+		}
+
+		embeddedMethod := int(raw[8])
+		embeddedN := int(raw[9])
+		flags := raw[10]
+
+		// verify method and n match expected values
+		if embeddedMethod != expectedMethod || embeddedN != expectedN {
+			continue
+		}
+
+		// read filename len and secret len
+		filenameLen := int(binary.BigEndian.Uint16(raw[11:13]))
+		secretLen := int(binary.BigEndian.Uint32(raw[13:17]))
+		// check lengths sanity
+		headerTotal := 8 + 1 + 1 + 1 + 2 + 4 + filenameLen + 2 // magic+method+nLSB+flags+filenameLen+secretLen+filename+metadataLen
+		// need to ensure we extracted enough bytes to read metadataLen too
+		if len(raw) < headerTotal {
+			// insufficient raw, continue
+			continue
+		}
+		filenameStart := 17
+		if filenameLen > 0 {
+			if len(raw) < filenameStart+filenameLen+2 {
 				continue
 			}
-			if !bytes.Equal(raw[0:8], magicBytes) {
-				continue
+		}
+		filename := string(raw[17 : 17+filenameLen])
+		metaLenOff := 17 + filenameLen
+		metadataLen := int(binary.BigEndian.Uint16(raw[metaLenOff : metaLenOff+2]))
+		metaStart := metaLenOff + 2
+		if len(raw) < metaStart+metadataLen+secretLen {
+			// maybe we didn't extract whole payload yet; but if not enough capacity, skip
+			// However we only need to return the secret if lengths valid
+			// continue to next attempt
+			continue
+		}
+		secretStart := metaStart + metadataLen
+		secretBytes := raw[secretStart : secretStart+secretLen]
+		// If encryption flag set, and key provided, decrypt
+		encFlag := (flags & (1 << 0)) != 0
+		if encFlag {
+			if req.StegoKey == "" {
+				return nil, "", models.ErrInvalidStegoKey
 			}
-			embeddedN := int(raw[8])
-			flags := raw[9]
-			// verify embeddedN equals attempted n
-			if embeddedN != n {
-				continue
+			decrypted := s.crypto.VigenereCipher(secretBytes, req.StegoKey, false)
+
+			// Validate checksum (first 4 bytes)
+			if len(decrypted) < 4 {
+				return nil, "", models.ErrInvalidStegoKey
 			}
-			// read filename len
-			filenameLen := int(binary.BigEndian.Uint16(raw[10:12]))
-			secretLen := int(binary.BigEndian.Uint32(raw[12:16]))
-			// check lengths sanity
-			headerTotal := 8 + 1 + 1 + 2 + 4 + filenameLen + 2 // note: metadataLen (2) exists after filename
-			// need to ensure we extracted enough bytes to read metadataLen too
-			if len(raw) < headerTotal {
-				// insufficient raw, continue
-				continue
-			}
-			filenameStart := 16
-			if filenameLen > 0 {
-				if len(raw) < filenameStart+filenameLen+2 {
-					continue
-				}
-			}
-			filename := string(raw[16 : 16+filenameLen])
-			metaLenOff := 16 + filenameLen
-			metadataLen := int(binary.BigEndian.Uint16(raw[metaLenOff : metaLenOff+2]))
-			metaStart := metaLenOff + 2
-			if len(raw) < metaStart+metadataLen+secretLen {
-				// maybe we didn't extract whole payload yet; but if not enough capacity, skip
-				// However we only need to return the secret if lengths valid
-				// continue to next attempt
-				continue
-			}
-			secretStart := metaStart + metadataLen
-			secretBytes := raw[secretStart : secretStart+secretLen]
-			// If encryption flag set, and key provided, decrypt
-			encFlag := (flags & (1 << 0)) != 0
-			if encFlag {
-				if req.StegoKey == "" {
+
+			actualData := decrypted[4:]
+			expectedChecksum := calculateChecksum(actualData)
+
+			// Compare checksums
+			for i := 0; i < 4; i++ {
+				if decrypted[i] != expectedChecksum[i] {
 					return nil, "", models.ErrInvalidStegoKey
 				}
-				secretBytes = s.crypto.VigenereCipher(secretBytes, req.StegoKey, false)
 			}
-			// success
-			return secretBytes, filename, nil
+
+			secretBytes = actualData
 		}
+		// success
+		return secretBytes, filename, nil
 	}
 
 	return nil, "", models.ErrExtractionFailed

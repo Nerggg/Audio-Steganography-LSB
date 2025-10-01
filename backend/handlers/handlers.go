@@ -95,7 +95,7 @@ func (h *Handlers) HealthHandler(c *gin.Context) {
 // CalculateCapacityHandler handles the capacity calculation request
 //
 //	@Summary		Calculate Audio Embedding Capacity
-//	@Description	Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.
+//	@Description	Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using different steganography methods. The capacity is returned for LSB methods (1-4 LSBs) and Parity method (1 bit per byte).
 //	@Tags			Steganography
 //	@Accept			multipart/form-data
 //	@Produce		json
@@ -182,15 +182,16 @@ func (h *Handlers) CalculateCapacityHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// EmbedHandler embeds a secret file into an audio file using LSB steganography
+// EmbedHandler embeds a secret file into an audio file using LSB or Parity steganography
 // @Summary      Embed secret file into audio
-// @Description  Embeds a secret file into the provided audio file using n-LSB steganography. Supports optional Vigenère encryption and random embedding start using a stego key. Metadata (filename, format, size, method, flags) is automatically stored inside the stego file.
+// @Description  Embeds a secret file into the provided audio file using LSB or Parity steganography method. LSB method supports 1-4 LSBs, while Parity method uses 1 bit per byte. Supports optional Vigenère encryption and random embedding start using a stego key. Metadata (filename, format, size, method, flags) is automatically stored inside the stego file.
 // @Tags         Steganography
 // @Accept       multipart/form-data
 // @Produce      audio/mpeg
 // @Param        audio            formData  file   true  "Cover audio file (MP3)"
 // @Param        secret           formData  file   true  "Secret file to embed"
-// @Param        lsb              formData  int    true  "Number of LSBs to use (1-4)"
+// @Param        method           formData  string true  "Steganography method: 'lsb' or 'parity'"
+// @Param        lsb              formData  int    false "Number of LSBs to use (1-4), required only for LSB method"
 // @Param        stego_key        formData  string false "Key for encryption and/or random start"
 // @Param        use_encryption   formData  bool   false "Enable Vigenère encryption"
 // @Param        use_random_start formData  bool   false "Enable random start embedding"
@@ -223,11 +224,26 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	secretData, _ := io.ReadAll(secretFile)
 
 	// === Ambil parameter ===
-	lsbStr := c.PostForm("lsb")
-	lsb, err := strconv.Atoi(lsbStr)
-	if err != nil || lsb < 1 || lsb > 4 {
-		sendError(c, http.StatusBadRequest, "INVALID_LSB", "LSB value must be between 1 and 4")
+	methodStr := c.PostForm("method")
+	method := models.SteganographyMethod(methodStr)
+	if !method.IsValid() {
+		sendMethodError(c, fmt.Sprintf("Invalid steganography method '%s'. Please specify 'lsb' or 'parity'", methodStr))
 		return
+	}
+
+	lsb := 1 // Default for parity method
+	if method == models.MethodLSB {
+		lsbStr := c.PostForm("lsb")
+		if lsbStr == "" {
+			sendError(c, http.StatusBadRequest, "MISSING_LSB", "LSB value is required for LSB method")
+			return
+		}
+		var err error
+		lsb, err = strconv.Atoi(lsbStr)
+		if err != nil || lsb < 1 || lsb > 4 {
+			sendError(c, http.StatusBadRequest, "INVALID_LSB", "LSB value must be between 1 and 4")
+			return
+		}
 	}
 
 	stegoKey := c.PostForm("stego_key")
@@ -244,6 +260,7 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 		SecretFile:     secretData,
 		SecretFileName: secretHeader.Filename,
 		StegoKey:       stegoKey,
+		Method:         method,
 		NLsb:           lsb,
 		UseEncryption:  useEncryption,
 		UseRandomStart: useRandomStart,
@@ -252,6 +269,32 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	// === Embed melalui service ===
 	stegoAudio, psnr, err := h.steganographyService.EmbedMessage(embedReq, secretData, nil)
 	if err != nil {
+		// Provide more specific error messages based on error type
+		if err == models.ErrInsufficientCapacity {
+			// Calculate capacity to show in error
+			capacity, capacityErr := h.steganographyService.CalculateCapacity(audioData)
+			if capacityErr == nil {
+				var availableCapacity int
+				if method == models.MethodLSB {
+					switch lsb {
+					case 1:
+						availableCapacity = capacity.OneLSB
+					case 2:
+						availableCapacity = capacity.TwoLSB
+					case 3:
+						availableCapacity = capacity.ThreeLSB
+					case 4:
+						availableCapacity = capacity.FourLSB
+					}
+				} else {
+					availableCapacity = capacity.Parity
+				}
+				sendError(c, http.StatusBadRequest, "INSUFFICIENT_CAPACITY",
+					fmt.Sprintf("Secret file size (%d bytes) exceeds available capacity (%d bytes) for %s method",
+						len(secretData), availableCapacity, method))
+				return
+			}
+		}
 		sendError(c, http.StatusInternalServerError, "PROCESSING_ERROR", "Failed to embed data: "+err.Error())
 		return
 	}
@@ -265,7 +308,11 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	// === Set header response ===
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", outputFilename))
 	c.Header("X-PSNR-Value", fmt.Sprintf("%.2f", psnr))
-	c.Header("X-Embedding-Method", fmt.Sprintf("%d-LSB", lsb))
+	if method == models.MethodLSB {
+		c.Header("X-Embedding-Method", fmt.Sprintf("%d-LSB", lsb))
+	} else {
+		c.Header("X-Embedding-Method", "Parity")
+	}
 	c.Header("X-Secret-Size", strconv.Itoa(len(secretData)))
 	c.Header("X-Processing-Time", strconv.Itoa(processingTime))
 	c.Header("X-Output-Format", "MP3")
@@ -273,13 +320,14 @@ func (h *Handlers) EmbedHandler(c *gin.Context) {
 	c.Data(http.StatusOK, "audio/mpeg", stegoAudio)
 }
 
-// ExtractHandler extracts a secret file from an audio file using LSB steganography
+// ExtractHandler extracts a secret file from an audio file using LSB or Parity steganography
 // @Summary      Extract secret file from audio
-// @Description  Extracts a secret file that was previously embedded in an audio file using n-LSB steganography. Supports optional Vigenère decryption and random start. Automatically restores original filename and metadata.
+// @Description  Extracts a secret file that was previously embedded in an audio file using LSB or Parity steganography. Auto-detects the method used during embedding. Supports optional Vigenère decryption and random start. Automatically restores original filename and metadata.
 // @Tags         Steganography
 // @Accept       multipart/form-data
 // @Produce      application/octet-stream
 // @Param        stego_audio      formData  file   true  "Stego audio file (MP3 with embedded data)"
+// @Param        method           formData  string false "Optional: specify method ('lsb' or 'parity') to speed up extraction"
 // @Param        stego_key        formData  string false "Key for decryption and/or random start"
 // @Param        output_filename  formData  string false "Optional output filename override"
 // @Success      200  {file}  binary  "Extracted secret file"
@@ -302,8 +350,20 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 	stegoKey := c.PostForm("stego_key")
 	outputFilename := c.PostForm("output_filename")
 
+	// Optional method parameter for faster extraction
+	methodStr := c.PostForm("method")
+	var method models.SteganographyMethod
+	if methodStr != "" {
+		method = models.SteganographyMethod(methodStr)
+		if !method.IsValid() {
+			sendMethodError(c, fmt.Sprintf("Invalid steganography method '%s'. Leave empty for auto-detection or specify 'lsb' or 'parity'", methodStr))
+			return
+		}
+	}
+
 	extractReq := &models.ExtractRequest{
 		StegoAudio:     stegoData,
+		Method:         method, // Empty string means auto-detect
 		StegoKey:       stegoKey,
 		OutputFilename: outputFilename,
 	}
@@ -320,7 +380,7 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 	}
 
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", outputFilename))
-	c.Header("X-Extraction-Method", "Auto-detected LSB")
+	c.Header("X-Extraction-Method", "Auto-detected")
 	c.Header("X-Secret-Size", strconv.Itoa(len(secretData)))
 	c.Header("X-Processing-Time", strconv.Itoa(processingTime))
 
@@ -328,16 +388,39 @@ func (h *Handlers) ExtractHandler(c *gin.Context) {
 }
 
 // sendError sends a standardized error response
+// sendError sends a standardized error response with additional context
 func sendError(c *gin.Context, statusCode int, code string, message string) {
 	errorResponse := models.ErrorResponse{
 		Success: false,
 		Error: models.ErrorDetail{
 			Message: message,
 			Details: map[string]interface{}{
-				"code": code,
+				"code":      code,
+				"timestamp": time.Now(),
 			},
 		},
 	}
 
 	c.JSON(statusCode, errorResponse)
+}
+
+// sendMethodError sends an error with information about supported methods
+func sendMethodError(c *gin.Context, message string) {
+	errorResponse := models.ErrorResponse{
+		Success: false,
+		Error: models.ErrorDetail{
+			Message: message,
+			Details: map[string]interface{}{
+				"code":              "INVALID_METHOD",
+				"supported_methods": []string{"lsb", "parity"},
+				"method_descriptions": map[string]string{
+					"lsb":    "Least Significant Bit method (supports 1-4 LSBs)",
+					"parity": "Parity bit method (1 bit per byte, more robust)",
+				},
+				"timestamp": time.Now(),
+			},
+		},
+	}
+
+	c.JSON(http.StatusBadRequest, errorResponse)
 }

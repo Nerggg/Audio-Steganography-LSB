@@ -6,13 +6,13 @@ import (
 
 // SteganographyService defines the interface for steganography operations
 type SteganographyService interface {
-	// CalculateCapacity calculates the embedding capacity for different LSB methods
+	// CalculateCapacity calculates the embedding capacity for different steganography methods (LSB and Parity)
 	CalculateCapacity(audioData []byte) (*models.CapacityResult, error)
 
-	// EmbedMessage embeds a secret message into audio data
+	// EmbedMessage embeds a secret message into audio data using the specified method
 	EmbedMessage(req *models.EmbedRequest, secretData []byte, metadata []byte) ([]byte, float64, error)
 
-	// ExtractMessage extracts a secret message from audio data
+	// ExtractMessage extracts a secret message from audio data using auto-detection or specified method
 	ExtractMessage(req *models.ExtractRequest, audioData []byte) ([]byte, string, error)
 }
 

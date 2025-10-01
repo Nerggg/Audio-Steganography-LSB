@@ -9,6 +9,7 @@ var (
 	ErrInvalidMP3           = errors.New("failed to decode audio data, not a valid MP3 file")
 	ErrInsufficientCapacity = errors.New("insufficient audio capacity for the provided data")
 	ErrInvalidLSB           = errors.New("LSB value must be between 1 and 4")
+	ErrInvalidMethod        = errors.New("invalid steganography method, must be 'lsb' or 'parity'")
 	ErrInvalidStegoKey      = errors.New("steganography key cannot be empty when encryption or random start is enabled")
 	ErrInvalidSignature     = errors.New("invalid steganography signature - data may not be embedded or corrupted")
 	ErrFileTooLarge         = errors.New("file size exceeds maximum allowed limit")

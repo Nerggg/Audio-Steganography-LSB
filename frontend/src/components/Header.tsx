@@ -15,11 +15,6 @@ const Header: React.FC = () => {
 
         {/* Subtitle */}
         <p className="text-xl md:text-2xl text-cyan-400 font-light tracking-wider mb-2">AUDIO STEGANOGRAPHY TERMINAL</p>
-
-        {/* Animated scanline */}
-        <div className="absolute top-0 left-0 right-0 h-full overflow-hidden pointer-events-none">
-          <div className="absolute w-full h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-pulse"></div>
-        </div>
       </div>
 
       {/* Grid pattern background */}

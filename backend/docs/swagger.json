@@ -7,7 +7,7 @@
     "paths": {
         "/capacity": {
             "post": {
-                "description": "Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using the multiple-LSB method. The capacity is returned for 1, 2, 3, and 4 LSBs.",
+                "description": "Calculates the maximum size of a secret file (in bytes) that can be embedded into an uploaded audio file (MP3 or WAV) using different steganography methods. The capacity is returned for LSB methods (1-4 LSBs) and Parity method (1 bit per byte).",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -63,7 +63,7 @@
         },
         "/embed": {
             "post": {
-                "description": "Embeds a secret file into the provided audio file using n-LSB steganography. Supports optional Vigenère encryption and random embedding start using a stego key. Metadata (filename, format, size, method, flags) is automatically stored inside the stego file.",
+                "description": "Embeds a secret file into the provided audio file using LSB or Parity steganography method. LSB method supports 1-4 LSBs, while Parity method uses 1 bit per byte. Supports optional Vigenère encryption and random embedding start using a stego key. Metadata (filename, format, size, method, flags) is automatically stored inside the stego file.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -90,11 +90,17 @@
                         "required": true
                     },
                     {
-                        "type": "integer",
-                        "description": "Number of LSBs to use (1-4)",
-                        "name": "lsb",
+                        "type": "string",
+                        "description": "Steganography method: 'lsb' or 'parity'",
+                        "name": "method",
                         "in": "formData",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of LSBs to use (1-4), required only for LSB method",
+                        "name": "lsb",
+                        "in": "formData"
                     },
                     {
                         "type": "string",
@@ -145,7 +151,7 @@
         },
         "/extract": {
             "post": {
-                "description": "Extracts a secret file that was previously embedded in an audio file using n-LSB steganography. Supports optional Vigenère decryption and random start. Automatically restores original filename and metadata.",
+                "description": "Extracts a secret file that was previously embedded in an audio file using LSB or Parity steganography. Auto-detects the method used during embedding. Supports optional Vigenère decryption and random start. Automatically restores original filename and metadata.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -163,6 +169,12 @@
                         "name": "stego_audio",
                         "in": "formData",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Optional: specify method ('lsb' or 'parity') to speed up extraction",
+                        "name": "method",
+                        "in": "formData"
                     },
                     {
                         "type": "string",
@@ -291,6 +303,7 @@
             "type": "object",
             "properties": {
                 "1_lsb": {
+                    "description": "LSB method capacities",
                     "type": "integer"
                 },
                 "2_lsb": {
@@ -300,6 +313,10 @@
                     "type": "integer"
                 },
                 "4_lsb": {
+                    "type": "integer"
+                },
+                "parity": {
+                    "description": "Parity coding capacity (1 bit per byte)",
                     "type": "integer"
                 }
             }

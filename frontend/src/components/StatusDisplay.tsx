@@ -1,7 +1,8 @@
 import type React from "react"
 import type { StatusDisplayProps } from "../types"
+import { formatCapacity, STEGANOGRAPHY_METHODS } from "../utils/steganography"
 
-const StatusDisplay: React.FC<StatusDisplayProps> = ({ status, psnr }) => {
+const StatusDisplay: React.FC<StatusDisplayProps> = ({ status, capacityInfo, psnr }) => {
   const statusColors = {
     info: "text-cyan-400 border-cyan-400/50",
     success: "text-green-400 border-green-400/50",
@@ -42,6 +43,40 @@ const StatusDisplay: React.FC<StatusDisplayProps> = ({ status, psnr }) => {
 
       {/* Additional info panels */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+        {/* Method info */}
+        {capacityInfo && (
+          <div className="border border-blue-400/50 rounded-lg p-3 bg-blue-900/20 backdrop-blur-sm">
+            <div className="text-blue-400 font-mono text-sm mb-1">METHOD</div>
+            <div className="text-white text-lg font-bold">
+              {STEGANOGRAPHY_METHODS[capacityInfo.selectedMethod].name}
+              {capacityInfo.selectedMethod === 'lsb' && capacityInfo.selectedLSB && (
+                <span className="text-sm ml-1">({capacityInfo.selectedLSB}-LSB)</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Capacity display */}
+        {capacityInfo && (
+          <div className={`border rounded-lg p-3 backdrop-blur-sm ${
+            capacityInfo.isCapacitySufficient 
+              ? 'border-green-400/50 bg-green-900/20' 
+              : 'border-red-400/50 bg-red-900/20'
+          }`}>
+            <div className={`font-mono text-sm mb-1 ${
+              capacityInfo.isCapacitySufficient ? 'text-green-400' : 'text-red-400'
+            }`}>
+              CAPACITY
+            </div>
+            <div className="text-white text-lg font-bold">
+              {formatCapacity(capacityInfo.availableBytes)}
+            </div>
+            <div className="text-xs text-gray-400">
+              Required: {formatCapacity(capacityInfo.requiredBytes)}
+            </div>
+          </div>
+        )}
+
         {/* PSNR display */}
         {psnr !== undefined && (
           <div className="border border-green-400/50 rounded-lg p-3 bg-green-900/20 backdrop-blur-sm">
