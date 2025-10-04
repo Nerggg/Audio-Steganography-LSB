@@ -24,6 +24,8 @@ func NewAudioEncoder() AudioEncoder {
 }
 
 // CalculatePSNR calculates Peak Signal-to-Noise Ratio between original and modified audio
+// According to specification: PSNR = 10 * log10(MAX²/MSE)
+// Minimum PSNR threshold: 30 dB (values below indicate significant audio degradation)
 func (a *audioService) CalculatePSNR(original, modified []byte) float64 {
 	if len(original) != len(modified) {
 		log.Printf("[WARN] CalculatePSNR: Length mismatch - original: %d, modified: %d", len(original), len(modified))
@@ -53,9 +55,10 @@ func (a *audioService) CalculatePSNR(original, modified []byte) float64 {
 		return math.Inf(1) // Perfect match
 	}
 
-	// Calculate PSNR using maximum possible value for 16-bit signed samples
+	// Calculate PSNR using specification formula: PSNR = 10 * log10(MAX²/MSE)
+	// MAX = 32767 for 16-bit PCM (as per specification)
 	maxValue := 32767.0 // Maximum value for 16-bit signed integer
-	psnr := 20 * math.Log10(maxValue/math.Sqrt(mse))
+	psnr := 10 * math.Log10((maxValue*maxValue)/mse)
 
 	log.Printf("[DEBUG] CalculatePSNR: MSE=%.6f, PSNR=%.2f dB (samples: %d)", mse, psnr, sampleCount)
 	return psnr

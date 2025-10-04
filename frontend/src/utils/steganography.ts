@@ -40,6 +40,12 @@ export const STEGANOGRAPHY_METHODS: Record<SteganographyMethod, MethodInfo> = {
   }
 }
 
+// PSNR quality thresholds (as per specification)
+export const PSNR_THRESHOLDS = {
+  MINIMUM: 30, // Minimum acceptable PSNR (30 dB as per specification)
+  EXCELLENT: 40 // Excellent quality threshold
+} as const
+
 // Default embed options
 export const DEFAULT_EMBED_OPTIONS = {
   stegKey: '',
@@ -47,6 +53,39 @@ export const DEFAULT_EMBED_OPTIONS = {
   nLSB: 1 as 1 | 2 | 3 | 4,
   encrypt: false,
   randomStart: false
+}
+
+// PSNR quality assessment function
+export const assessPSNRQuality = (psnr: number): {
+  level: 'excellent' | 'good' | 'acceptable' | 'poor'
+  description: string
+  color: string
+} => {
+  if (psnr >= PSNR_THRESHOLDS.EXCELLENT) {
+    return {
+      level: 'excellent',
+      description: 'Excellent audio quality',
+      color: 'green'
+    }
+  } else if (psnr >= PSNR_THRESHOLDS.MINIMUM) {
+    return {
+      level: 'good', 
+      description: 'Good audio quality preserved',
+      color: 'green'
+    }
+  } else if (psnr >= 20) {
+    return {
+      level: 'acceptable',
+      description: 'Acceptable quality, slight degradation',
+      color: 'yellow'
+    }
+  } else {
+    return {
+      level: 'poor',
+      description: 'Poor quality, significant degradation',
+      color: 'red'
+    }
+  }
 }
 
 // Default extract options

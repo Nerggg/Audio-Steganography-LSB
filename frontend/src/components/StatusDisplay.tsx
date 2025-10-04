@@ -1,6 +1,6 @@
 import type React from "react"
 import type { StatusDisplayProps } from "../types"
-import { formatCapacity, STEGANOGRAPHY_METHODS } from "../utils/steganography"
+import { formatCapacity, STEGANOGRAPHY_METHODS, assessPSNRQuality } from "../utils/steganography"
 
 const StatusDisplay: React.FC<StatusDisplayProps> = ({ status, capacityInfo, psnr }) => {
   const statusColors = {
@@ -77,13 +77,41 @@ const StatusDisplay: React.FC<StatusDisplayProps> = ({ status, capacityInfo, psn
           </div>
         )}
 
-        {/* PSNR display */}
-        {psnr !== undefined && (
-          <div className="border border-green-400/50 rounded-lg p-3 bg-green-900/20 backdrop-blur-sm">
-            <div className="text-green-400 font-mono text-sm mb-1">PSNR</div>
-            <div className="text-white text-lg font-bold">{psnr.toFixed(2)} dB</div>
-          </div>
-        )}
+        {/* PSNR display with quality indicator */}
+        {psnr !== undefined && (() => {
+          const quality = assessPSNRQuality(psnr)
+          return (
+            <div className={`border rounded-lg p-3 backdrop-blur-sm ${
+              quality.color === 'green' 
+                ? 'border-green-400/50 bg-green-900/20' 
+                : quality.color === 'yellow'
+                ? 'border-yellow-400/50 bg-yellow-900/20'
+                : 'border-red-400/50 bg-red-900/20'
+            }`}>
+              <div className={`font-mono text-sm mb-1 ${
+                quality.color === 'green' ? 'text-green-400' : 
+                quality.color === 'yellow' ? 'text-yellow-400' : 'text-red-400'
+              }`}>
+                PSNR QUALITY
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="text-white text-lg font-bold">{psnr.toFixed(2)} dB</div>
+                <div className={`text-xs font-mono px-2 py-1 rounded ${
+                  quality.color === 'green' 
+                    ? 'bg-green-500/20 text-green-300' 
+                    : quality.color === 'yellow'
+                    ? 'bg-yellow-500/20 text-yellow-300'
+                    : 'bg-red-500/20 text-red-300'
+                }`}>
+                  {quality.level.toUpperCase()}
+                </div>
+              </div>
+              <div className="text-xs text-gray-400 mt-1">
+                {quality.description}
+              </div>
+            </div>
+          )
+        })()}
       </div>
     </div>
   )
